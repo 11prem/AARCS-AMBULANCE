@@ -1,4 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
@@ -12,9 +16,73 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _destinationController = TextEditingController();
   bool _isButtonPressed = false;
+  List<String> nearbyHospitals = [];
 
-  // Later you can add your own hospitals here dynamically
-  final List<String> recentDestinations = [];
+  @override
+  void initState() {
+    super.initState();
+    _fetchNearbyHospitals();
+  }
+
+  /// Get device location + nearby hospitals
+  Future<void> _fetchNearbyHospitals() async {
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          print("Location permission denied");
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        print("Location permission permanently denied");
+        return;
+      }
+
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      final String apiKey = "YOUR_GOOGLE_MAPS_API_KEY";
+      final String url =
+          "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+          "?location=${position.latitude},${position.longitude}"
+          "&radius=10000"
+          "&type=hospital"
+          "&key=$apiKey";
+
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final results = data["results"] as List;
+
+        setState(() {
+          nearbyHospitals = results
+              .map((place) => place["name"] as String)
+              .take(10)
+              .toList();
+        });
+      } else {
+        print("Google Places error: ${response.body}");
+      }
+    } catch (e) {
+      print("Error fetching hospitals: $e");
+    }
+  }
+
+  /// Open Google Maps in drive mode
+  Future<void> _openGoogleMaps(String destination) async {
+    final Uri googleMapsUrl = Uri.parse(
+      "https://www.google.com/maps/dir/?api=1&destination=$destination&travelmode=driving",
+    );
+    if (await canLaunchUrl(googleMapsUrl)) {
+      await launchUrl(googleMapsUrl, mode: LaunchMode.externalApplication);
+    } else {
+      throw "Could not open Google Maps.";
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,11 +96,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               // Top Bar with Ambulance ID only
               Row(
                 children: [
-                  const Icon(Icons.local_shipping_outlined,
-                      color: Colors.red),
+                  const Icon(Icons.local_shipping_outlined, color: Colors.red),
                   const SizedBox(width: 8),
                   Text(
-                    widget.ambulanceId, // show logged-in ambulance id
+                    widget.ambulanceId,
                     style: const TextStyle(
                         fontSize: 16, fontWeight: FontWeight.bold),
                   ),
@@ -71,7 +138,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     setState(() {
                       _isButtonPressed = false;
                     });
-                    // Start trip function can be added here
+                    if (_destinationController.text.isNotEmpty) {
+                      _openGoogleMaps(_destinationController.text);
+                    }
                   });
                 },
                 child: AnimatedContainer(
@@ -96,9 +165,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Nearby Destinations title
+              // Nearby Hospitals title
               const Text(
-                "Nearby destinations",
+                "Nearby hospitals",
                 style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -106,27 +175,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 12),
 
-              // Empty if no destinations
+              // Hospital list
               Expanded(
-                child: recentDestinations.isEmpty
+                child: nearbyHospitals.isEmpty
                     ? const Center(
                   child: Text(
-                    "No destinations yet",
+                    "Fetching hospitals...",
                     style: TextStyle(color: Colors.grey),
                   ),
                 )
                     : ListView.builder(
-                  itemCount: recentDestinations.length,
+                  itemCount: nearbyHospitals.length,
                   itemBuilder: (context, index) {
+                    final hospital = nearbyHospitals[index];
                     return ListTile(
-                      leading: const Icon(Icons.location_on_outlined,
+                      leading: const Icon(Icons.local_hospital,
                           color: Colors.red),
-                      title: Text(recentDestinations[index]),
-                      trailing: const Text(
-                        "Select",
-                        style: TextStyle(
-                            color: Colors.red,
-                            fontWeight: FontWeight.bold),
+                      title: Text(hospital),
+                      trailing: GestureDetector(
+                        onTap: () => _openGoogleMaps(hospital),
+                        child: const Text(
+                          "Select",
+                          style: TextStyle(
+                              color: Colors.red,
+                              fontWeight: FontWeight.bold),
+                        ),
                       ),
                     );
                   },
