@@ -6,8 +6,13 @@ import 'package:url_launcher/url_launcher.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
+  final VoidCallback onToggleTheme; // ✅ Theme toggle
 
-  const DashboardScreen({super.key, required this.ambulanceId});
+  const DashboardScreen({
+    super.key,
+    required this.ambulanceId,
+    required this.onToggleTheme,
+  });
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -27,25 +32,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Get device location + nearby hospitals
   Future<void> _fetchNearbyHospitals() async {
     try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          print("Location permission denied");
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        print("Location permission permanently denied");
-        return;
-      }
-
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      final String apiKey = "YOUR_GOOGLE_MAPS_API_KEY";
+      final String apiKey = "AIzaSyCsMOCb3IOIC0onuj55c0r03RDAE1pQUSM"; // replace with your key
       final String url =
           "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
           "?location=${position.latitude},${position.longitude}"
@@ -62,21 +53,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
           nearbyHospitals = results
               .map((place) => place["name"] as String)
               .take(10)
-              .toList();
+              .toList(); // limit to 10
         });
-      } else {
-        print("Google Places error: ${response.body}");
       }
     } catch (e) {
       print("Error fetching hospitals: $e");
     }
   }
 
-  /// Open Google Maps in drive mode
+  /// Open Google Maps in drive mode (✅ Fixed with encoding)
   Future<void> _openGoogleMaps(String destination) async {
+    final String encodedDestination = Uri.encodeComponent(destination);
     final Uri googleMapsUrl = Uri.parse(
-      "https://www.google.com/maps/dir/?api=1&destination=$destination&travelmode=driving",
+      "https://www.google.com/maps/dir/?api=1&destination=$encodedDestination&travelmode=driving",
     );
+
     if (await canLaunchUrl(googleMapsUrl)) {
       await launchUrl(googleMapsUrl, mode: LaunchMode.externalApplication);
     } else {
@@ -86,6 +77,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -93,15 +86,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Top Bar with Ambulance ID only
+              // 🚑 Ambulance ID + 🌞/🌙 theme toggle
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Icon(Icons.local_shipping_outlined, color: Colors.red),
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.ambulanceId,
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold),
+                  Row(
+                    children: [
+                      const Icon(Icons.local_shipping_outlined,
+                          color: Colors.red),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.ambulanceId,
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      isDark ? Icons.wb_sunny : Icons.nights_stay,
+                      color: Colors.red,
+                    ),
+                    onPressed: widget.onToggleTheme,
                   ),
                 ],
               ),
@@ -148,9 +154,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   height: 50,
                   width: double.infinity,
                   decoration: BoxDecoration(
-                    color: _isButtonPressed
-                        ? Colors.red.shade700
-                        : Colors.red,
+                    color:
+                    _isButtonPressed ? Colors.red.shade700 : Colors.red,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   alignment: Alignment.center,

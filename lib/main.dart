@@ -1,26 +1,58 @@
 import 'package:flutter/material.dart';
-import 'screens/dashboard.dart'; // ✅ Import dashboard screen
+import 'screens/dashboard.dart';
 
 void main() {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  ThemeMode _themeMode = ThemeMode.light; // default is light
+
+  void _toggleTheme() {
+    setState(() {
+      _themeMode =
+      _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'AARCS Ambulance',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(primarySwatch: Colors.red),
-      home: const LoginScreen(),
+      theme: ThemeData(
+        primarySwatch: Colors.red,
+        brightness: Brightness.light,
+      ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        primarySwatch: Colors.red,
+      ),
+      themeMode: _themeMode,
+      home: LoginScreen(
+        onToggleTheme: _toggleTheme,
+        isDark: _themeMode == ThemeMode.dark, // ✅ pass theme state
+      ),
     );
   }
 }
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  final VoidCallback onToggleTheme;
+  final bool isDark;
+
+  const LoginScreen({
+    super.key,
+    required this.onToggleTheme,
+    required this.isDark,
+  });
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -33,7 +65,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _rememberMe = false;
   bool _isButtonPressed = false;
 
-  // Valid credentials
   final Map<String, String> validCredentials = {
     "AMB001": "emergency123",
     "AMB002": "emergency234",
@@ -49,7 +80,10 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => DashboardScreen(ambulanceId: id), // ✅ go to dashboard
+          builder: (context) => DashboardScreen(
+            ambulanceId: id,
+            onToggleTheme: widget.onToggleTheme,
+          ),
         ),
       );
     } else {
@@ -67,9 +101,20 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Center(
           child: SingleChildScrollView(
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Logo
+                // 🌞/🌙 Theme toggle
+                Align(
+                  alignment: Alignment.topRight,
+                  child: IconButton(
+                    icon: Icon(
+                      widget.isDark ? Icons.wb_sunny : Icons.nights_stay,
+                      color: Colors.red,
+                    ),
+                    onPressed: widget.onToggleTheme,
+                  ),
+                ),
+
+                // 🚑 Logo
                 CircleAvatar(
                   radius: 40,
                   backgroundColor: Colors.red,
@@ -97,13 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     labelText: "Ambulance ID",
                     prefixIcon: Icon(Icons.local_shipping_outlined,
                         color: Colors.red),
-                    enabledBorder: OutlineInputBorder(
-                      borderSide: BorderSide(color: Colors.grey),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderSide: BorderSide(color: Colors.red, width: 2),
-                    ),
-                    hintText: "Enter your ambulance ID",
+                    border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -116,13 +155,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     labelText: "Password",
                     prefixIcon:
                     const Icon(Icons.lock_outline, color: Colors.red),
-                    enabledBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(color: Colors.grey),
-                    ),
-                    focusedBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(color: Colors.red, width: 2),
-                    ),
-                    hintText: "Enter your password",
+                    border: const OutlineInputBorder(),
                     suffixIcon: IconButton(
                       icon: Icon(
                         _obscurePassword
@@ -140,7 +173,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 10),
 
-                // Remember me
                 Row(
                   children: [
                     Checkbox(
@@ -157,7 +189,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // Login button with animation
                 GestureDetector(
                   onTapDown: (_) {
                     setState(() {
