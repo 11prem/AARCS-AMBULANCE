@@ -2,8 +2,13 @@ import 'package:flutter/material.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
+  final VoidCallback onToggleTheme;
 
-  const DashboardScreen({super.key, required this.ambulanceId});
+  const DashboardScreen({
+    super.key,
+    required this.ambulanceId,
+    required this.onToggleTheme,
+  });
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -12,12 +17,13 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _destinationController = TextEditingController();
   bool _isButtonPressed = false;
-
-  // Later you can add your own hospitals here dynamically
   final List<String> recentDestinations = [];
 
   @override
   Widget build(BuildContext context) {
+    // ✅ check theme directly
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -25,16 +31,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Top Bar with Ambulance ID only
+              // 🚑 ID + 🌞/🌙 toggle
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Icon(Icons.local_shipping_outlined,
-                      color: Colors.red),
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.ambulanceId, // show logged-in ambulance id
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold),
+                  Row(
+                    children: [
+                      const Icon(Icons.local_shipping_outlined,
+                          color: Colors.red),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.ambulanceId,
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      isDark ? Icons.wb_sunny : Icons.nights_stay,
+                      color: Colors.red,
+                    ),
+                    onPressed: widget.onToggleTheme,
                   ),
                 ],
               ),
@@ -46,15 +64,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 decoration: const InputDecoration(
                   hintText: "Enter destination",
                   prefixIcon: Icon(Icons.search, color: Colors.grey),
-                  border: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.grey),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.grey),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.red, width: 2),
-                  ),
+                  border: OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 16),
@@ -71,7 +81,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     setState(() {
                       _isButtonPressed = false;
                     });
-                    // Start trip function can be added here
+                    // Add trip logic here
                   });
                 },
                 child: AnimatedContainer(
@@ -79,9 +89,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   height: 50,
                   width: double.infinity,
                   decoration: BoxDecoration(
-                    color: _isButtonPressed
-                        ? Colors.red.shade700
-                        : Colors.red,
+                    color:
+                    _isButtonPressed ? Colors.red.shade700 : Colors.red,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   alignment: Alignment.center,
@@ -96,7 +105,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Nearby Destinations title
               const Text(
                 "Nearby destinations",
                 style: TextStyle(
@@ -106,7 +114,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 12),
 
-              // Empty if no destinations
               Expanded(
                 child: recentDestinations.isEmpty
                     ? const Center(
@@ -137,24 +144,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
 
-      // Bottom Navigation
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: 0,
         selectedItemColor: Colors.red,
         unselectedItemColor: Colors.grey,
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: "Home",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.add),
-            label: "New Trip",
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.history),
-            label: "History",
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
+          BottomNavigationBarItem(icon: Icon(Icons.add), label: "New Trip"),
+          BottomNavigationBarItem(icon: Icon(Icons.history), label: "History"),
         ],
       ),
     );
