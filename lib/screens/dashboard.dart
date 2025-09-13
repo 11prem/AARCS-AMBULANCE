@@ -18,7 +18,6 @@ class DashboardScreen extends StatefulWidget {
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
-
 class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _destinationController = TextEditingController();
   bool _isButtonPressed = false;
@@ -145,10 +144,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       "Fortis Malar Hospital",
       "Sri Ramachandra Medical Centre",
       "Stanley Medical College Hospital",
-      "Rajiv Gandhi Government Hospital",
-      "Gleneagles Global Health City",
-      "Chennai Orthopedic Center",
-      "Billroth Hospitals"
+      "Rajiv Gandhi Government Hospital"
     ];
   }
 
