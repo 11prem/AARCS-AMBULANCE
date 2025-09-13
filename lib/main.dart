@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/dashboard.dart';
 
 void main() {
@@ -71,12 +72,83 @@ class _LoginScreenState extends State<LoginScreen> {
     "AMB003": "emergency456",
   };
 
-  void _login() {
+  // SharedPreferences keys
+  static const String _ambulanceIdKey = 'ambulance_id';
+  static const String _passwordKey = 'password';
+  static const String _rememberMeKey = 'remember_me';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedCredentials();
+  }
+
+  // Load saved credentials from SharedPreferences
+  Future<void> _loadSavedCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedRememberMe = prefs.getBool(_rememberMeKey) ?? false;
+
+      if (savedRememberMe) {
+        final savedId = prefs.getString(_ambulanceIdKey) ?? '';
+        final savedPassword = prefs.getString(_passwordKey) ?? '';
+
+        setState(() {
+          _idController.text = savedId;
+          _passwordController.text = savedPassword;
+          _rememberMe = savedRememberMe;
+        });
+      }
+    } catch (e) {
+      // Handle any errors during loading
+      debugPrint('Error loading saved credentials: $e');
+    }
+  }
+
+  // Save credentials to SharedPreferences
+  Future<void> _saveCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      if (_rememberMe) {
+        // Save credentials if Remember Me is checked
+        await prefs.setString(_ambulanceIdKey, _idController.text.trim());
+        await prefs.setString(_passwordKey, _passwordController.text.trim());
+        await prefs.setBool(_rememberMeKey, true);
+      } else {
+        // Clear saved credentials if Remember Me is unchecked
+        await prefs.remove(_ambulanceIdKey);
+        await prefs.remove(_passwordKey);
+        await prefs.setBool(_rememberMeKey, false);
+      }
+    } catch (e) {
+      // Handle any errors during saving
+      debugPrint('Error saving credentials: $e');
+    }
+  }
+
+  // Clear all saved credentials
+  Future<void> _clearSavedCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_ambulanceIdKey);
+      await prefs.remove(_passwordKey);
+      await prefs.remove(_rememberMeKey);
+    } catch (e) {
+      debugPrint('Error clearing credentials: $e');
+    }
+  }
+
+  void _login() async {
     String id = _idController.text.trim();
     String password = _passwordController.text.trim();
 
     if (validCredentials.containsKey(id) &&
         validCredentials[id] == password) {
+
+      // Save credentials based on Remember Me checkbox state
+      await _saveCredentials();
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -182,6 +254,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         setState(() {
                           _rememberMe = value ?? false;
                         });
+                        // If unchecked, clear saved credentials immediately
+                        if (!_rememberMe) {
+                          _clearSavedCredentials();
+                        }
                       },
                     ),
                     const Text("Remember Me"),
@@ -229,5 +305,12 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _idController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 }
