@@ -1,14 +1,13 @@
-// screens/dashboard.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
-import 'route_navigation.dart'; // Import the new route navigation screen
+import 'route_navigation.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
-  final VoidCallback onToggleTheme;
+  final VoidCallback onToggleTheme; // ✅ Theme toggle
 
   const DashboardScreen({
     super.key,
@@ -24,7 +23,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _destinationController = TextEditingController();
   bool _isButtonPressed = false;
   List<String> nearbyHospitals = [];
-  String errorMessage = "";
 
   @override
   void initState() {
@@ -32,139 +30,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _fetchNearbyHospitals();
   }
 
-  /// Fetch device location first, then call free hospital API
+  /// Get device location + nearby hospitals
   Future<void> _fetchNearbyHospitals() async {
     try {
-      // Check if location services are enabled
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        setState(() {
-          nearbyHospitals = _getDefaultHospitals();
-          errorMessage = "Location disabled - showing nearby hospitals";
-        });
-        return;
-      }
-
-      // Check location permission
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          setState(() {
-            nearbyHospitals = _getDefaultHospitals();
-            errorMessage = "Location denied - showing nearby hospitals";
-          });
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        setState(() {
-          nearbyHospitals = _getDefaultHospitals();
-          errorMessage = "Location permanently denied - showing nearby hospitals";
-        });
-        return;
-      }
-
-      // Get current position
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      // Use the free alternative
-      await fetchNearbyHospitalsFree(position.latitude, position.longitude);
+      final String apiKey = "***REMOVED***"; // replace with your key
+      final String url =
+          "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+          "?location=${position.latitude},${position.longitude}"
+          "&radius=10000"
+          "&type=hospital"
+          "&key=$apiKey";
 
-    } catch (e) {
-      setState(() {
-        nearbyHospitals = _getDefaultHospitals();
-        errorMessage = "Location error - showing nearby hospitals";
-      });
-    }
-  }
-
-  /// Fetch hospitals using free OpenStreetMap data via Overpass API
-  Future<void> fetchNearbyHospitalsFree(double lat, double lng) async {
-    // Using Overpass API (OpenStreetMap) - completely free
-    final String overpassUrl =
-        "https://overpass-api.de/api/interpreter?data="
-        "[out:json][timeout:25];"
-        "(node[amenity=hospital](around:5000,$lat,$lng);"
-        "way[amenity=hospital](around:5000,$lat,$lng););"
-        "out center meta;";
-
-    try {
-      final response = await http.get(Uri.parse(overpassUrl));
-
+      final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        print("Overpass API response: $data");
+        final data = json.decode(response.body);
+        final results = data["results"] as List;
 
-        if (data['elements'] != null) {
-          final elements = data['elements'] as List;
-
-          setState(() {
-            nearbyHospitals = elements
-                .where((element) => element['tags']?['name'] != null)
-                .take(5)
-                .map((element) => element['tags']['name'].toString())
-                .toList()
-                .cast<String>();
-
-            // If no hospitals found, add some default ones
-            if (nearbyHospitals.isEmpty) {
-              nearbyHospitals = _getDefaultHospitals();
-            }
-
-            errorMessage = "";
-          });
-        } else {
-          setState(() {
-            nearbyHospitals = _getDefaultHospitals();
-            errorMessage = "";
-          });
-        }
-      } else {
         setState(() {
-          nearbyHospitals = _getDefaultHospitals();
-          errorMessage = "Using default hospital list";
+          nearbyHospitals = results
+              .map((place) => place["name"] as String)
+              .take(10)
+              .toList(); // limit to 10
         });
       }
     } catch (e) {
-      setState(() {
-        nearbyHospitals = _getDefaultHospitals();
-        errorMessage = "Using offline hospital data";
-      });
+      print("Error fetching hospitals: $e");
     }
   }
 
-  /// Fallback hospital list for your area (Tamil Nadu) - More comprehensive
-  List<String> _getDefaultHospitals() {
-    return [
-      "Apollo Hospital Chennai",
-      "Government General Hospital",
-      "MIOT International Chennai",
-      "Fortis Malar Hospital",
-      "Sri Ramachandra Medical Centre",
-      "Stanley Medical College Hospital",
-      "Rajiv Gandhi Government Hospital"
-    ];
-  }
-
-  /// Navigate to Route Navigation Screen
-  void _startTrip() {
-    String destination = _destinationController.text.trim();
-
-    if (destination.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Please enter a destination"),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    // Navigate to the route navigation screen
+  /// Open Route Navigation Screen
+  Future<void> _openGoogleMaps(String destination) async {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -175,32 +74,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     );
-  }
-
-  /// Navigate to Route Navigation Screen with selected hospital
-  void _selectHospital(String hospitalName) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => RouteNavigationScreen(
-          ambulanceId: widget.ambulanceId,
-          destination: hospitalName,
-          onToggleTheme: widget.onToggleTheme,
-        ),
-      ),
-    );
-  }
-
-  /// Open Google Maps in drive mode (fallback option)
-  Future<void> _openGoogleMaps(String destination) async {
-    final Uri googleMapsUrl = Uri.parse(
-      "https://www.google.com/maps/dir/?api=1&destination=$destination&travelmode=driving",
-    );
-    if (await canLaunchUrl(googleMapsUrl)) {
-      await launchUrl(googleMapsUrl, mode: LaunchMode.externalApplication);
-    } else {
-      throw "Could not open Google Maps.";
-    }
   }
 
   @override
@@ -214,7 +87,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Top Bar with Ambulance ID + 🌞/🌙 toggle
+              // 🚑 Ambulance ID + 🌞/🌙 theme toggle
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -247,12 +120,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 decoration: const InputDecoration(
                   hintText: "Enter destination",
                   prefixIcon: Icon(Icons.search, color: Colors.grey),
-                  border: OutlineInputBorder(),
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.grey),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.grey),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.red, width: 2),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
 
-              // Start Trip Button - Updated to navigate to route screen
+              // Start Trip Button
               GestureDetector(
                 onTapDown: (_) {
                   setState(() {
@@ -264,7 +145,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     setState(() {
                       _isButtonPressed = false;
                     });
-                    _startTrip(); // Updated to call _startTrip instead of _openGoogleMaps
+                    if (_destinationController.text.isNotEmpty) {
+                      _openGoogleMaps(_destinationController.text);
+                    }
                   });
                 },
                 child: AnimatedContainer(
@@ -289,68 +172,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(height: 24),
 
               // Nearby Hospitals title
-              Text(
+              const Text(
                 "Nearby hospitals",
                 style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : Colors.black87),
+                    color: Colors.black87),
               ),
               const SizedBox(height: 12),
 
-              // Hospital list or error message
+              // Hospital list
               Expanded(
-                child: errorMessage.isNotEmpty
-                    ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      errorMessage,
-                      style: const TextStyle(color: Colors.orange),
-                    ),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: nearbyHospitals.length,
-                        itemBuilder: (context, index) {
-                          final hospital = nearbyHospitals[index];
-                          return ListTile(
-                            leading: const Icon(Icons.local_hospital,
-                                color: Colors.red),
-                            title: Text(hospital),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                GestureDetector(
-                                  onTap: () => _selectHospital(hospital),
-                                  child: const Text(
-                                    "Navigate",
-                                    style: TextStyle(
-                                        color: Colors.red,
-                                        fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                GestureDetector(
-                                  onTap: () => _openGoogleMaps(hospital),
-                                  child: const Icon(
-                                    Icons.open_in_new,
-                                    color: Colors.grey,
-                                    size: 20,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                )
-                    : nearbyHospitals.isEmpty
-                    ? const Text(
-                  "Loading nearby hospitals...",
-                  style: TextStyle(color: Colors.grey),
+                child: nearbyHospitals.isEmpty
+                    ? const Center(
+                  child: Text(
+                    "Fetching hospitals...",
+                    style: TextStyle(color: Colors.grey),
+                  ),
                 )
                     : ListView.builder(
                   itemCount: nearbyHospitals.length,
@@ -360,28 +198,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       leading: const Icon(Icons.local_hospital,
                           color: Colors.red),
                       title: Text(hospital),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          GestureDetector(
-                            onTap: () => _selectHospital(hospital),
-                            child: const Text(
-                              "Navigate",
-                              style: TextStyle(
-                                  color: Colors.red,
-                                  fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () => _openGoogleMaps(hospital),
-                            child: const Icon(
-                              Icons.open_in_new,
-                              color: Colors.grey,
-                              size: 20,
-                            ),
-                          ),
-                        ],
+                      trailing: GestureDetector(
+                        onTap: () => _openGoogleMaps(hospital),
+                        child: const Text(
+                          "Select",
+                          style: TextStyle(
+                              color: Colors.red,
+                              fontWeight: FontWeight.bold),
+                        ),
                       ),
                     );
                   },
@@ -390,6 +214,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
         ),
+      ),
+
+      // Bottom Navigation
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: 0,
+        selectedItemColor: Colors.red,
+        unselectedItemColor: Colors.grey,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: "Home",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.add),
+            label: "New Trip",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.history),
+            label: "History",
+          ),
+        ],
       ),
     );
   }
