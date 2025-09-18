@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import 'route_navigation.dart'; // Import the new route navigation screen
 
 class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
@@ -18,6 +19,7 @@ class DashboardScreen extends StatefulWidget {
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
+
 class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _destinationController = TextEditingController();
   bool _isButtonPressed = false;
@@ -148,7 +150,48 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ];
   }
 
-  /// Open Google Maps in drive mode
+  /// Navigate to Route Navigation Screen
+  void _startTrip() {
+    String destination = _destinationController.text.trim();
+
+    if (destination.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please enter a destination"),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Navigate to the route navigation screen
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RouteNavigationScreen(
+          ambulanceId: widget.ambulanceId,
+          destination: destination,
+          onToggleTheme: widget.onToggleTheme,
+        ),
+      ),
+    );
+  }
+
+  /// Navigate to Route Navigation Screen with selected hospital
+  void _selectHospital(String hospitalName) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RouteNavigationScreen(
+          ambulanceId: widget.ambulanceId,
+          destination: hospitalName,
+          onToggleTheme: widget.onToggleTheme,
+        ),
+      ),
+    );
+  }
+
+  /// Open Google Maps in drive mode (fallback option)
   Future<void> _openGoogleMaps(String destination) async {
     final Uri googleMapsUrl = Uri.parse(
       "https://www.google.com/maps/dir/?api=1&destination=$destination&travelmode=driving",
@@ -209,7 +252,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Start Trip Button
+              // Start Trip Button - Updated to navigate to route screen
               GestureDetector(
                 onTapDown: (_) {
                   setState(() {
@@ -221,9 +264,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     setState(() {
                       _isButtonPressed = false;
                     });
-                    if (_destinationController.text.isNotEmpty) {
-                      _openGoogleMaps(_destinationController.text);
-                    }
+                    _startTrip(); // Updated to call _startTrip instead of _openGoogleMaps
                   });
                 },
                 child: AnimatedContainer(
@@ -277,14 +318,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             leading: const Icon(Icons.local_hospital,
                                 color: Colors.red),
                             title: Text(hospital),
-                            trailing: GestureDetector(
-                              onTap: () => _openGoogleMaps(hospital),
-                              child: const Text(
-                                "Select",
-                                style: TextStyle(
-                                    color: Colors.red,
-                                    fontWeight: FontWeight.bold),
-                              ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                GestureDetector(
+                                  onTap: () => _selectHospital(hospital),
+                                  child: const Text(
+                                    "Navigate",
+                                    style: TextStyle(
+                                        color: Colors.red,
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: () => _openGoogleMaps(hospital),
+                                  child: const Icon(
+                                    Icons.open_in_new,
+                                    color: Colors.grey,
+                                    size: 20,
+                                  ),
+                                ),
+                              ],
                             ),
                           );
                         },
@@ -305,14 +360,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       leading: const Icon(Icons.local_hospital,
                           color: Colors.red),
                       title: Text(hospital),
-                      trailing: GestureDetector(
-                        onTap: () => _openGoogleMaps(hospital),
-                        child: const Text(
-                          "Select",
-                          style: TextStyle(
-                              color: Colors.red,
-                              fontWeight: FontWeight.bold),
-                        ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          GestureDetector(
+                            onTap: () => _selectHospital(hospital),
+                            child: const Text(
+                              "Navigate",
+                              style: TextStyle(
+                                  color: Colors.red,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () => _openGoogleMaps(hospital),
+                            child: const Icon(
+                              Icons.open_in_new,
+                              color: Colors.grey,
+                              size: 20,
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   },
