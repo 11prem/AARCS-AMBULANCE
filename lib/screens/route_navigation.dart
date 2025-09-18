@@ -149,7 +149,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
           _lastPosition = newPosition;
 
           // Update distance and time (simulate decreasing)
-          _totalDistance = max(0, _totalDistance - (speedKmh / 1800)); // Approximate decrease
+          _totalDistance = max(
+              0, _totalDistance - (speedKmh / 1800)); // Approximate decrease
           _estimatedTime = (_totalDistance / max(1, speedKmh / 60)).round();
 
           // Simulate traffic updates
@@ -210,7 +211,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     // Show snackbar
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(_showTraffic ? "Traffic overlay enabled" : "Traffic overlay disabled"),
+        content: Text(_showTraffic
+            ? "Traffic overlay enabled"
+            : "Traffic overlay disabled"),
         duration: const Duration(seconds: 2),
         backgroundColor: Colors.red,
       ),
@@ -227,7 +230,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
   Future<void> _openFullMapsApp() async {
     final Uri googleMapsUrl = Uri.parse(
-      "https://www.google.com/maps/dir/?api=1&destination=${widget.destination}&travelmode=driving",
+      "https://www.google.com/maps/dir/?api=1&destination=${widget
+          .destination}&travelmode=driving",
     );
 
     if (await canLaunchUrl(googleMapsUrl)) {
@@ -243,7 +247,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final bool isDark = Theme
+        .of(context)
+        .brightness == Brightness.dark;
 
     return Scaffold(
       body: Stack(
@@ -291,7 +297,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                   if (_showTraffic) ...[
                     const SizedBox(height: 20),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: _trafficColor,
                         borderRadius: BorderRadius.circular(20),
