@@ -2,13 +2,19 @@
     package="com.example.aacrs_app">
 
     <!-- Permissions -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
 
     <application
         android:label="aacrs_app"
         android:icon="@mipmap/ic_launcher">
+
+        <!-- Google Maps API Key -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="***REMOVED***" />
 
         <activity
             android:name=".MainActivity"

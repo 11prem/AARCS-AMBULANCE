@@ -1,11 +1,9 @@
-// screens/route_navigation.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 
 class RouteNavigationScreen extends StatefulWidget {
   final String ambulanceId;
@@ -24,20 +22,26 @@ class RouteNavigationScreen extends StatefulWidget {
 }
 
 class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
-  Timer? _locationTimer;
+  GoogleMapController? _mapController;
   Position? _currentPosition;
-  Position? _lastPosition;
-  double _currentSpeed = 0.0; // km/h
-  double _totalDistance = 0.0; // km
-  int _estimatedTime = 0; // minutes
-  bool _isNavigating = true;
-  String _nextInstruction = "Loading route...";
-  List<Position> _routePositions = [];
+  Position? _previousPosition;
+  Set<Polyline> _polylines = {};
+  Set<Marker> _markers = {};
 
-  // Traffic simulation
-  bool _showTraffic = true;
-  String _trafficStatus = "Light Traffic";
-  Color _trafficColor = Colors.green;
+  // Navigation data
+  String _eta = "--";
+  String _distance = "--";
+  double _currentSpeed = 0.0;
+  bool _isLocationActive = false;
+  bool _isTrafficClearing = false;
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  // API key - replace with your actual key
+  final String _apiKey = "***REMOVED***";
+
+  Timer? _locationTimer;
+  StreamSubscription<Position>? _positionSubscription;
 
   @override
   void initState() {
@@ -45,563 +49,608 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     _initializeNavigation();
   }
 
+  @override
+  void dispose() {
+    _locationTimer?.cancel();
+    _positionSubscription?.cancel();
+    _mapController?.dispose();
+    super.dispose();
+  }
+
   Future<void> _initializeNavigation() async {
-    await _getCurrentLocation();
-    await _calculateRoute();
-    _startLocationTracking();
+    try {
+      await _checkLocationPermissions();
+      await _getCurrentLocation();
+      if (_currentPosition != null) {
+        await _getDirections();
+        _startRealTimeLocationUpdates();
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = "Failed to initialize navigation: ${e.toString()}";
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _checkLocationPermissions() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    // Check if location services are enabled
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      throw 'Location services are disabled. Please enable location services.';
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        throw 'Location permissions are denied';
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      throw 'Location permissions are permanently denied, we cannot request permissions.';
+    }
   }
 
   Future<void> _getCurrentLocation() async {
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        setState(() {
-          _nextInstruction = "Location services disabled";
-        });
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        setState(() {
-          _nextInstruction = "Location permission denied";
-        });
-        return;
-      }
-
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
       );
 
       setState(() {
         _currentPosition = position;
-        _lastPosition = position;
+        _isLocationActive = true;
       });
     } catch (e) {
       setState(() {
-        _nextInstruction = "Error getting location: $e";
+        _isLocationActive = false;
+      });
+      throw "Error getting location: ${e.toString()}";
+    }
+  }
+
+  void _startRealTimeLocationUpdates() {
+    const LocationSettings locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 5, // Update every 5 meters
+    );
+
+    _positionSubscription = Geolocator.getPositionStream(
+      locationSettings: locationSettings,
+    ).listen(
+          (Position position) {
+        if (mounted) {
+          _updateLocation(position);
+        }
+      },
+      onError: (e) {
+        setState(() {
+          _isLocationActive = false;
+        });
+      },
+    );
+  }
+
+  void _updateLocation(Position newPosition) {
+    if (_currentPosition != null) {
+      // Calculate speed in km/h
+      double distanceInMeters = Geolocator.distanceBetween(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+        newPosition.latitude,
+        newPosition.longitude,
+      );
+
+      double timeInSeconds = newPosition.timestamp!.difference(_currentPosition!.timestamp!).inSeconds.toDouble();
+
+      if (timeInSeconds > 0) {
+        double speedInMps = distanceInMeters / timeInSeconds;
+        double speedInKmh = speedInMps * 3.6;
+
+        setState(() {
+          _currentSpeed = speedInKmh;
+          _currentPosition = newPosition;
+          _isLocationActive = true;
+        });
+
+        // Update route if significant location change
+        if (distanceInMeters > 50) {
+          _getDirections();
+        }
+      }
+    } else {
+      setState(() {
+        _currentPosition = newPosition;
+        _isLocationActive = true;
       });
     }
   }
 
-  Future<void> _calculateRoute() async {
+  Future<void> _getDirections() async {
     if (_currentPosition == null) return;
 
-    try {
-      // Simulate route calculation using OpenRouteService (free alternative)
-      // You can also use Google Directions API if you have an API key
-      final String orsUrl =
-          "https://api.openrouteservice.org/v2/directions/driving-car?"
-          "api_key=YOUR_ORS_API_KEY&"
-          "start=${_currentPosition!.longitude},${_currentPosition!.latitude}&"
-          "end=77.2090,28.6139"; // Example destination coordinates
-
-      // For demo purposes, we'll simulate the route data
-      _simulateRouteData();
-    } catch (e) {
-      _simulateRouteData();
-    }
-  }
-
-  void _simulateRouteData() {
-    // Simulate route data for demonstration
     setState(() {
-      _totalDistance = 8.2 + Random().nextDouble() * 2; // 8.2-10.2 km
-      _estimatedTime = 12 + Random().nextInt(8); // 12-20 minutes
-      _nextInstruction = "Head north on Main Street";
+      _isLoading = true;
+      _errorMessage = null;
     });
-  }
-
-  void _startLocationTracking() {
-    _locationTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      _updateLocation();
-    });
-  }
-
-  Future<void> _updateLocation() async {
-    if (!_isNavigating) return;
 
     try {
-      Position newPosition = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+      // 1) Convert destination text to lat/lng using Geocoding API (if needed)
+      double destLat;
+      double destLng;
+
+      final destText = widget.destination.trim();
+
+      // If destination is already "lat,lng" use it directly
+      final latLngMatch = RegExp(r'^\s*([-+]?\d+(\.\d+)?),\s*([-+]?\d+(\.\d+)?)\s*$')
+          .firstMatch(destText);
+      if (latLngMatch != null) {
+        destLat = double.parse(latLngMatch.group(1)!);
+        destLng = double.parse(latLngMatch.group(3)!);
+      } else {
+        final geocodeUrl =
+            "https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(destText)}&key=$_apiKey";
+        final geocodeResp = await http.get(Uri.parse(geocodeUrl));
+        if (geocodeResp.statusCode != 200) {
+          throw 'Geocoding failed: HTTP ${geocodeResp.statusCode}';
+        }
+        final geoData = json.decode(geocodeResp.body);
+        if (geoData['status'] != 'OK' || (geoData['results'] as List).isEmpty) {
+          throw 'Geocoding failed: ${geoData['status'] ?? 'no results'}';
+        }
+        final loc = geoData['results'][0]['geometry']['location'];
+        destLat = (loc['lat'] as num).toDouble();
+        destLng = (loc['lng'] as num).toDouble();
+      }
+
+      // 2) Build Directions API request using lat/lng for origin & destination
+      final origin = "${_currentPosition!.latitude},${_currentPosition!.longitude}";
+      final destination = "$destLat,$destLng";
+
+      final directionsUrl = Uri.parse(
+          "https://maps.googleapis.com/maps/api/directions/json"
+              "?origin=$origin"
+              "&destination=$destination"
+              "&key=$_apiKey"
+              "&mode=driving"
+              "&units=metric"
+              "&avoid=tolls"
       );
 
-      if (_lastPosition != null) {
-        // Calculate speed
-        double distance = Geolocator.distanceBetween(
-          _lastPosition!.latitude,
-          _lastPosition!.longitude,
-          newPosition.latitude,
-          newPosition.longitude,
-        );
+      final response = await http.get(directionsUrl);
 
-        double timeElapsed = 2.0; // 2 seconds
-        double speedMps = distance / timeElapsed; // meters per second
-        double speedKmh = speedMps * 3.6; // convert to km/h
+      if (response.statusCode != 200) {
+        throw 'Failed to get directions: HTTP ${response.statusCode}';
+      }
 
-        setState(() {
-          _currentPosition = newPosition;
-          _currentSpeed = speedKmh;
-          _lastPosition = newPosition;
+      final data = json.decode(response.body);
 
-          // Update distance and time (simulate decreasing)
-          _totalDistance = max(
-              0, _totalDistance - (speedKmh / 1800)); // Approximate decrease
-          _estimatedTime = (_totalDistance / max(1, speedKmh / 60)).round();
+      if (data['status'] != 'OK' || (data['routes'] as List).isEmpty) {
+        final apiStatus = data['status'] ?? 'UNKNOWN';
+        final apiMsg = data['error_message'] ?? '';
+        throw 'No routes found (status: $apiStatus) ${apiMsg}';
+      }
 
-          // Simulate traffic updates
-          _updateTrafficStatus();
-          _updateNavigationInstructions();
-        });
-      } else {
-        setState(() {
-          _currentPosition = newPosition;
-          _lastPosition = newPosition;
-        });
+      final route = data['routes'][0];
+      final leg = route['legs'][0];
+
+      // Extract distance and eta text
+      final distanceText = leg['distance'] != null ? leg['distance']['text'] : "--";
+      final durationText = leg['duration'] != null ? leg['duration']['text'] : "--";
+
+      // Convert overview polyline to points
+      final overview = route['overview_polyline']?['points'] ?? '';
+      final List<LatLng> polylinePoints = overview.isNotEmpty
+          ? _decodePolyline(overview)
+          : <LatLng>[];
+
+      // create polyline
+      final polyline = Polyline(
+        polylineId: const PolylineId('route'),
+        points: polylinePoints,
+        color: Colors.red,
+        width: 6,
+      );
+
+      final startMarker = Marker(
+        markerId: const MarkerId('start'),
+        position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        infoWindow: const InfoWindow(title: 'Start'),
+      );
+
+      final endMarker = Marker(
+        markerId: const MarkerId('end'),
+        position: LatLng(destLat, destLng),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(title: widget.destination),
+      );
+
+      setState(() {
+        _polylines = {polyline};
+        _markers = {startMarker, endMarker};
+        _distance = distanceText;
+        _eta = durationText;
+        _isLoading = false;
+        _errorMessage = null;
+      });
+
+      // Move camera to fit route if we have points
+      if (polylinePoints.isNotEmpty && _mapController != null) {
+        _fitCameraToRoute(polylinePoints);
       }
     } catch (e) {
-      // Handle location update errors
+      setState(() {
+        _errorMessage = "Failed to get directions: ${e.toString()}";
+        _isLoading = false;
+      });
     }
   }
 
-  void _updateTrafficStatus() {
-    // Simulate traffic status changes
-    Random random = Random();
-    int trafficLevel = random.nextInt(3);
+  List<LatLng> _decodePolyline(String polyline) {
+    List<LatLng> points = [];
+    int index = 0;
+    int len = polyline.length;
+    int lat = 0;
+    int lng = 0;
 
-    switch (trafficLevel) {
-      case 0:
-        _trafficStatus = "Light Traffic";
-        _trafficColor = Colors.green;
-        break;
-      case 1:
-        _trafficStatus = "Moderate Traffic";
-        _trafficColor = Colors.orange;
-        break;
-      case 2:
-        _trafficStatus = "Heavy Traffic";
-        _trafficColor = Colors.red;
-        break;
+    while (index < len) {
+      int shift = 0;
+      int result = 0;
+      int b;
+      do {
+        b = polyline.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = polyline.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+
+      points.add(LatLng(lat / 1E5, lng / 1E5));
     }
+
+    return points;
   }
 
-  void _updateNavigationInstructions() {
-    // Simulate navigation instructions
-    List<String> instructions = [
-      "Continue straight for 500m",
-      "Turn right at the next intersection",
-      "Take the highway exit",
-      "Keep left at the fork",
-      "Your destination is ahead on the right",
-    ];
+  void _fitCameraToRoute(List<LatLng> points) {
+    if (points.isEmpty || _mapController == null) return;
 
-    Random random = Random();
-    _nextInstruction = instructions[random.nextInt(instructions.length)];
-  }
+    double minLat = points.first.latitude;
+    double maxLat = points.first.latitude;
+    double minLng = points.first.longitude;
+    double maxLng = points.first.longitude;
 
-  void _clearTraffic() {
-    setState(() {
-      _showTraffic = !_showTraffic;
-    });
+    for (LatLng point in points) {
+      minLat = minLat < point.latitude ? minLat : point.latitude;
+      maxLat = maxLat > point.latitude ? maxLat : point.latitude;
+      minLng = minLng < point.longitude ? minLng : point.longitude;
+      maxLng = maxLng > point.longitude ? maxLng : point.longitude;
+    }
 
-    // Show snackbar
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(_showTraffic
-            ? "Traffic overlay enabled"
-            : "Traffic overlay disabled"),
-        duration: const Duration(seconds: 2),
-        backgroundColor: Colors.red,
+    _mapController!.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(minLat, minLng),
+          northeast: LatLng(maxLat, maxLng),
+        ),
+        100.0,
       ),
     );
   }
 
-  void _endNavigation() {
+  void _clearTraffic() {
     setState(() {
-      _isNavigating = false;
+      _isTrafficClearing = true;
     });
-    _locationTimer?.cancel();
-    Navigator.pop(context);
-  }
 
-  Future<void> _openFullMapsApp() async {
-    final Uri googleMapsUrl = Uri.parse(
-      "https://www.google.com/maps/dir/?api=1&destination=${widget
-          .destination}&travelmode=driving",
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.traffic, color: Colors.white),
+            SizedBox(width: 8),
+            Text("Emergency traffic clearance requested"),
+          ],
+        ),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 3),
+      ),
     );
 
-    if (await canLaunchUrl(googleMapsUrl)) {
-      await launchUrl(googleMapsUrl, mode: LaunchMode.externalApplication);
-    }
+    Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _isTrafficClearing = false;
+        });
+      }
+    });
   }
 
-  @override
-  void dispose() {
-    _locationTimer?.cancel();
-    super.dispose();
+  Widget _buildErrorWidget() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            const SizedBox(height: 16),
+            Text(
+              _errorMessage ?? "An error occurred",
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  _isLoading = true;
+                  _errorMessage = null;
+                });
+                _initializeNavigation();
+              },
+              child: const Text("Retry"),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final bool isDark = Theme
-        .of(context)
-        .brightness == Brightness.dark;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      body: Stack(
-        children: [
-          // Map Container (Simulated)
-          Container(
-            width: double.infinity,
-            height: double.infinity,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.blue.shade200,
-                  Colors.blue.shade50,
+      appBar: AppBar(
+        title: Text("Navigation - ${widget.ambulanceId}"),
+        backgroundColor: Colors.red,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: SafeArea(
+        child: _errorMessage != null ? _buildErrorWidget() : Column(
+          children: [
+            // Top ETA and Distance Card
+            Container(
+              margin: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+              decoration: BoxDecoration(
+                color: isDark ? Colors.grey[800] : Colors.white,
+                borderRadius: BorderRadius.circular(16.0),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 10.0,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text(
+                          _eta,
+                          style: const TextStyle(
+                            fontSize: 48,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Text(
+                          "MIN",
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    height: 60,
+                    width: 1,
+                    color: Colors.grey[300],
+                  ),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text(
+                          _distance,
+                          style: const TextStyle(
+                            fontSize: 48,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Text(
+                          "KM",
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.map,
-                    size: 100,
-                    color: Colors.blue.shade300,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    "Map View",
-                    style: TextStyle(
-                      fontSize: 24,
-                      color: Colors.blue.shade600,
-                      fontWeight: FontWeight.bold,
+
+            // Google Map
+            Expanded(
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16.0),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16.0),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 10.0,
+                      offset: const Offset(0, 2),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    "Route to: ${widget.destination}",
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.blue.shade500,
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16.0),
+                  child: _isLoading
+                      ? const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircularProgressIndicator(color: Colors.red),
+                        SizedBox(height: 16),
+                        Text("Loading map..."),
+                      ],
                     ),
-                  ),
-                  if (_showTraffic) ...[
-                    const SizedBox(height: 20),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: _trafficColor,
-                        borderRadius: BorderRadius.circular(20),
+                  )
+                      : _currentPosition == null
+                      ? const Center(child: Text("Location not available"))
+                      : GoogleMap(
+                    onMapCreated: (GoogleMapController controller) {
+                      _mapController = controller;
+                    },
+                    initialCameraPosition: CameraPosition(
+                      target: LatLng(
+                        _currentPosition!.latitude,
+                        _currentPosition!.longitude,
                       ),
-                      child: Text(
-                        _trafficStatus,
+                      zoom: 15.0,
+                    ),
+                    polylines: _polylines,
+                    markers: _markers,
+                    myLocationEnabled: true,
+                    myLocationButtonEnabled: true,
+                    zoomControlsEnabled: true,
+                    mapToolbarEnabled: false,
+                    trafficEnabled: true,
+                  ),
+                ),
+              ),
+            ),
+
+            // Speed and Location Status
+            Container(
+              margin: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+              decoration: BoxDecoration(
+                color: isDark ? Colors.grey[800] : Colors.white,
+                borderRadius: BorderRadius.circular(16.0),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 10.0,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "${_currentSpeed.toInt()} km/h",
                         style: const TextStyle(
-                          color: Colors.white,
+                          fontSize: 24,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-
-          // Top ETA Card
-          Positioned(
-            top: 50,
-            left: 20,
-            right: 20,
-            child: Card(
-              elevation: 8,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Text(
-                            "${_estimatedTime}",
-                            style: const TextStyle(
-                              fontSize: 32,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const Text(
-                            "MIN",
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      width: 1,
-                      height: 40,
-                      color: Colors.grey.shade300,
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Text(
-                            "${_totalDistance.toStringAsFixed(1)}",
-                            style: const TextStyle(
-                              fontSize: 32,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const Text(
-                            "KM",
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // Speed Display
-          Positioned(
-            top: 160,
-            right: 20,
-            child: Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  children: [
-                    Text(
-                      "${_currentSpeed.toStringAsFixed(0)}",
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue,
-                      ),
-                    ),
-                    const Text(
-                      "km/h",
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // Navigation Instructions
-          Positioned(
-            bottom: 180,
-            left: 20,
-            right: 20,
-            child: Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.navigation,
-                      color: Colors.blue,
-                      size: 24,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        _nextInstruction,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
+                      const Text(
+                        "Current Speed",
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey,
                         ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // Bottom Controls
-          Positioned(
-            bottom: 60,
-            left: 20,
-            right: 20,
-            child: Row(
-              children: [
-                // Clear Traffic Button
-                Expanded(
-                  child: GestureDetector(
-                    onTap: _clearTraffic,
-                    child: Container(
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(25),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            _showTraffic ? Icons.traffic : Icons.clear_all,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _showTraffic ? "CLEAR TRAFFIC" : "SHOW TRAFFIC",
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Open Maps Button
-                GestureDetector(
-                  onTap: _openFullMapsApp,
-                  child: Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      color: Colors.blue,
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                    child: const Icon(
-                      Icons.open_in_new,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Top Navigation Bar
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              height: 100,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.3),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(
-                              Icons.arrow_back,
-                              color: Colors.white,
-                            ),
-                            onPressed: _endNavigation,
-                          ),
-                          Text(
-                            widget.ambulanceId,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          isDark ? Icons.wb_sunny : Icons.nights_stay,
-                          color: Colors.white,
-                        ),
-                        onPressed: widget.onToggleTheme,
                       ),
                     ],
                   ),
-                ),
-              ),
-            ),
-          ),
-
-          // Status indicator (Sending location)
-          Positioned(
-            bottom: 20,
-            left: 20,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.green,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  const Text(
-                    "Sending location",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                    ),
+                  Row(
+                    children: [
+                      Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: _isLocationActive ? Colors.green : Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _isLocationActive ? "Location Active" : "Location Inactive",
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
-          ),
-        ],
+
+            // Clear Traffic Button
+            Container(
+              margin: const EdgeInsets.fromLTRB(16.0, 0, 16.0, 16.0),
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isTrafficClearing ? null : _clearTraffic,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16.0),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30.0),
+                  ),
+                  elevation: 8.0,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (_isTrafficClearing)
+                      const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    else
+                      const Icon(Icons.warning_amber_rounded, size: 24),
+                    const SizedBox(width: 8),
+                    Text(
+                      _isTrafficClearing ? "CLEARING TRAFFIC..." : "🚨 CLEAR TRAFFIC",
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
