@@ -419,12 +419,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               TextField(
                 controller: _destinationController,
                 decoration: InputDecoration(
-                  hintText: "Enter destination (name or lat,lng)",
+                  hintText: "Enter destination",
                   prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.navigation, color: Colors.red),
-                    onPressed: _openRouteScreenFromInput,
-                  ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                 ),
               ),
