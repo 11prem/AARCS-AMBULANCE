@@ -27,26 +27,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Position? _currentPosition;
   List<Map<String, dynamic>> nearbyHospitals = [];
 
+  // Suggestions from Google Places Autocomplete
+  List<dynamic> _searchSuggestions = [];
+
   // Put your real API key here (or load from env)
   static const String _googleApiKey = '***REMOVED***';
 
   // Allowed keywords (lowercase) to accept names that are hospital-like
   final List<String> _allowedNameKeywords = [
     'hospital',
-    'medical center',
-    'medical centre',
-    'medical college',
-    'medical institution',
-    'medical institution',
-    'multi-specialty',
-    'multispecialty',
-    'multi super-specialty',
-    'multi-super-specialty',
-    'health city',
-    'health center',
-    'health centre',
-    'medical institution',
-    'medical institute'
+    'multi specialty',
   ];
 
   @override
@@ -70,9 +60,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        // Request user to enable; try to open settings
         await Geolocator.openLocationSettings();
-        // still continue - last known may exist
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
@@ -80,26 +68,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
         permission = await Geolocator.requestPermission();
       }
       if (permission == LocationPermission.deniedForever) {
-        // cannot request
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Location permissions are permanently denied')),
         );
         return;
       }
 
-      // Try getting precise current position; if times out, fallback to last-known
       try {
         final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
         _currentPosition = pos;
       } catch (e) {
-        // fallback
         final last = await Geolocator.getLastKnownPosition();
         _currentPosition = last;
         debugPrint('Current position failed, using lastKnown: $e');
       }
     } catch (e) {
       debugPrint('Error determining position: $e');
-      // leave _currentPosition possibly null
     }
   }
 
@@ -116,7 +100,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'https://maps.googleapis.com/maps/api/place/nearbysearch/json?'
         'location=${_currentPosition!.latitude},${_currentPosition!.longitude}'
         '&radius=5000'
-        '&type=hospital' // still ask for hospital type
+        '&type=hospital'
         '&key=$_googleApiKey';
 
     try {
@@ -133,7 +117,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final data = json.decode(resp.body);
       final results = (data['results'] as List?) ?? [];
 
-      // Build hospitals list, filter and compute distance, skip if lat/lng missing
       final List<Map<String, dynamic>> hospitals = [];
       for (var place in results) {
         final geometry = place['geometry'];
@@ -152,7 +135,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final String vicinity = (place['vicinity'] ?? '').toString();
         final double rating = (place['rating'] is num) ? (place['rating'] as num).toDouble() : 0.0;
 
-        // Filter by types OR name keyword
         final dynamic typesDynamic = place['types'];
         final List<String> types = [];
         if (typesDynamic is List) {
@@ -166,7 +148,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final bool nameMatch = _allowedNameKeywords.any((kw) => nameLower.contains(kw));
 
         if (!isTypeHospital && !nameMatch) {
-          // skip clinics / shops / non-hospitals
           continue;
         }
 
@@ -186,7 +167,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           'rating': rating,
           'distance_m': distanceMeters,
           'distance_text': (distanceMeters / 1000).toStringAsFixed(2) + ' km',
-          // 'duration_text' to be filled with Distance Matrix
         });
       }
 
@@ -197,13 +177,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
-      // Sort by distance ascending
       hospitals.sort((a, b) => (a['distance_m'] as double).compareTo(b['distance_m'] as double));
-
-      // take top 10
       final limited = hospitals.take(10).toList();
 
-      // Use Distance Matrix API to fetch durations for each destination in a single call
       try {
         final origin = '${_currentPosition!.latitude},${_currentPosition!.longitude}';
         final destinations = limited.map((h) => '${h['lat']},${h['lng']}').join('|');
@@ -233,7 +209,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       } catch (e) {
         debugPrint('Distance Matrix failed: $e');
-        // fallback: leave duration_text empty or estimate later
         for (var h in limited) {
           h['duration_text'] = '--';
         }
@@ -252,8 +227,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  // 🔎 Fetch autocomplete suggestions
+  Future<void> _fetchSearchSuggestions(String input) async {
+    if (input.isEmpty) {
+      setState(() => _searchSuggestions = []);
+      return;
+    }
+
+    final url = Uri.parse(
+      'https://maps.googleapis.com/maps/api/place/autocomplete/json'
+          '?input=$input'
+          '&types=establishment'
+          '&keyword=hospital'
+          '&key=$_googleApiKey',
+    );
+
+    try {
+      final resp = await http.get(url);
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
+        setState(() {
+          _searchSuggestions = data['predictions'] ?? [];
+        });
+      }
+    } catch (e) {
+      debugPrint('Autocomplete error: $e');
+    }
+  }
+
   void _openRouteScreenWithHospital(Map<String, dynamic> hospital) {
-    // navigate and pass coords and name
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -277,7 +279,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return;
     }
 
-    // If user entered coordinates like "12.3456,78.9012"
     final latLngMatch = RegExp(r'^\s*([-+]?\d+(\.\d+)?),\s*([-+]?\d+(\.\d+)?)\s*$')
         .firstMatch(text);
     if (latLngMatch != null) {
@@ -305,14 +306,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return;
     }
 
-    // Otherwise pass the text (name) and let RouteNavigationScreen geocode it
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => RouteNavigationScreen(
           ambulanceId: widget.ambulanceId,
           destination: text,
-          // pass null to let route screen geocode
           destinationLat: null,
           destinationLng: null,
           onToggleTheme: widget.onToggleTheme,
@@ -336,18 +335,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           padding: const EdgeInsets.symmetric(vertical: 14.0, horizontal: 16.0),
           child: Row(
             children: [
-              // left area: name + distance (stacked)
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Top-left name
                     Text(
                       name,
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
-                    // distance left bottom
                     Row(
                       children: [
                         const Icon(Icons.place, size: 14, color: Colors.grey),
@@ -361,8 +357,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
-
-              // right area: ETA
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -395,7 +389,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // header row
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -415,20 +408,74 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
               const SizedBox(height: 12),
 
-              // Destination input
-              TextField(
-                controller: _destinationController,
-                decoration: InputDecoration(
-                  hintText: "Enter destination",
-                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                ),
+              // 🔎 Destination input with autocomplete
+              Column(
+                children: [
+                  TextField(
+                    controller: _destinationController,
+                    onChanged: _fetchSearchSuggestions,
+                    decoration: InputDecoration(
+                      hintText: "Enter hospital destination",
+                      prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+                  if (_searchSuggestions.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                      ),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _searchSuggestions.length,
+                        itemBuilder: (context, index) {
+                          final suggestion = _searchSuggestions[index];
+                          final description = suggestion['description'] ?? '';
+                          return ListTile(
+                            title: Text(description),
+                            onTap: () async {
+                              _destinationController.text = description;
+                              setState(() => _searchSuggestions = []);
+
+                              final placeId = suggestion['place_id'];
+                              final detailsUrl = Uri.parse(
+                                'https://maps.googleapis.com/maps/api/place/details/json'
+                                    '?place_id=$placeId&key=$_googleApiKey',
+                              );
+                              final detailsResp = await http.get(detailsUrl);
+                              if (detailsResp.statusCode == 200) {
+                                final detailsData = json.decode(detailsResp.body);
+                                final loc = detailsData['result']['geometry']['location'];
+                                final lat = loc['lat'];
+                                final lng = loc['lng'];
+
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => RouteNavigationScreen(
+                                      ambulanceId: widget.ambulanceId,
+                                      destination: description,
+                                      destinationLat: lat,
+                                      destinationLng: lng,
+                                      onToggleTheme: widget.onToggleTheme,
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                ],
               ),
 
               const SizedBox(height: 12),
 
-              // Start Trip button
               GestureDetector(
                 onTapDown: (_) => setState(() => _isButtonPressed = true),
                 onTapUp: (_) {
@@ -452,7 +499,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
               const SizedBox(height: 18),
 
-              // Nearby Hospitals header + refresh icon
               Row(
                 children: [
                   const Text('Nearby Hospitals', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -467,7 +513,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
               const SizedBox(height: 6),
 
-              // list
               Expanded(
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator())
