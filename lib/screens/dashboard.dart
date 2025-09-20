@@ -1,4 +1,5 @@
 // lib/screens/dashboard.dart
+
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -24,29 +25,61 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _destinationController = TextEditingController();
   bool _isButtonPressed = false;
   bool _isLoading = false;
-
   Position? _currentPosition;
   List<Map<String, dynamic>> nearbyHospitals = [];
   Timer? _debounce;
+
   // Suggestions from Google Places Autocomplete
   List<dynamic> _searchSuggestions = [];
 
   // Put your real API key here (or load from env)
   static const String _googleApiKey = '***REMOVED***';
 
-  // Allowed keywords (lowercase) to accept names that are hospital-like
+  // Enhanced filtering keywords for emergency and general hospitals only
   final List<String> _allowedNameKeywords = [
     'hospital',
     'multi specialty',
+    'multi speciality',
+    'general hospital',
+    'medical college',
+    'government hospital',
+    'emergency',
+    'trauma center',
+    'trauma centre',
+    'super specialty',
+    'super speciality',
+    'medical center',
+    'medical centre',
+    'healthcare center',
+    'healthcare centre',
   ];
 
-  // Keywords to identify hospital suggestions
+  // Keywords to EXCLUDE specialized clinics and non-emergency facilities
+  final List<String> _excludeKeywords = [
+    'dental', 'ortho', 'orthopedic', 'orthopedic',
+    'skin', 'dermatology', 'cosmetic', 'beauty',
+    'eye', 'optical', 'vision', 'lasik',
+    'ent', 'ear nose throat',
+    'fertility', 'ivf',
+    'psychiatry', 'psychology', 'mental health',
+    'physiotherapy', 'rehab', 'rehabilitation',
+    'ayurveda', 'homeopathy',
+    'diagnostic', 'lab', 'pathology',
+    'pharmacy', 'medical store',
+    'clinic', 'polyclinic',
+    'veterinary', 'pet',
+    'nursing home',
+  ];
+
+  // Keywords to identify hospital suggestions for autocomplete
   final List<String> _hospitalKeywords = [
     'hospital',
     'specialty',
     'emergency',
     'medical center',
+    'medical centre',
     'healthcare',
+    'trauma',
   ];
 
   @override
@@ -77,6 +110,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
+
       if (permission == LocationPermission.deniedForever) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Location permissions are permanently denied')),
@@ -97,6 +131,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  // Enhanced hospital filtering function
+  bool _isValidHospital(String name, List<String> types) {
+    final String nameLower = name.toLowerCase();
+
+    // First, check if it contains any excluded keywords
+    for (String excludeKeyword in _excludeKeywords) {
+      if (nameLower.contains(excludeKeyword.toLowerCase())) {
+        return false;
+      }
+    }
+
+    // Check if it's a valid hospital based on name
+    bool nameMatch = _allowedNameKeywords.any((kw) => nameLower.contains(kw.toLowerCase()));
+
+    // Check if it's a valid hospital based on Google Places types
+    bool typeMatch = types.any((type) =>
+    type.contains('hospital') ||
+        type.contains('health') ||
+        type.contains('establishment')
+    );
+
+    // Must have either name match or be classified as hospital by Google
+    return nameMatch || (typeMatch && !nameLower.contains('clinic'));
+  }
+
   Future<void> _fetchNearbyHospitals() async {
     nearbyHospitals = [];
     if (_currentPosition == null) {
@@ -109,13 +168,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final placesUrl =
         'https://maps.googleapis.com/maps/api/place/nearbysearch/json?'
         'location=${_currentPosition!.latitude},${_currentPosition!.longitude}'
-        '&radius=5000'
+        '&radius=10000'
         '&type=hospital'
         '&key=$_googleApiKey';
 
     try {
       setState(() => _isLoading = true);
-
       final resp = await http.get(Uri.parse(placesUrl));
       if (resp.statusCode != 200) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -126,8 +184,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       final data = json.decode(resp.body);
       final results = (data['results'] as List?) ?? [];
-
       final List<Map<String, dynamic>> hospitals = [];
+
       for (var place in results) {
         final geometry = place['geometry'];
         final loc = geometry?['location'];
@@ -139,25 +197,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         final double lat = latNum.toDouble();
         final double lng = lngNum.toDouble();
-
         final String name = (place['name'] ?? '').toString();
         final String placeId = (place['place_id'] ?? '').toString();
         final String vicinity = (place['vicinity'] ?? '').toString();
         final double rating = (place['rating'] is num) ? (place['rating'] as num).toDouble() : 0.0;
-
         final dynamic typesDynamic = place['types'];
         final List<String> types = [];
+
         if (typesDynamic is List) {
           for (var t in typesDynamic) {
             if (t != null) types.add(t.toString().toLowerCase());
           }
         }
 
-        final bool isTypeHospital = types.contains('hospital') || types.contains('health');
-        final String nameLower = name.toLowerCase();
-        final bool nameMatch = _allowedNameKeywords.any((kw) => nameLower.contains(kw));
-
-        if (!isTypeHospital && !nameMatch) {
+        // Enhanced filtering - only include valid emergency/general hospitals
+        if (!_isValidHospital(name, types)) {
           continue;
         }
 
@@ -193,7 +247,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       try {
         final origin = '${_currentPosition!.latitude},${_currentPosition!.longitude}';
         final destinations = limited.map((h) => '${h['lat']},${h['lng']}').join('|');
-
         final dmUrl = Uri.parse(
             'https://maps.googleapis.com/maps/api/distancematrix/json'
                 '?origins=$origin'
@@ -237,14 +290,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // 🔎 Fetch autocomplete suggestions (NEARBY HOSPITALS ONLY)
+  // Enhanced autocomplete with hospital filtering
   Future<void> _fetchSearchSuggestions(String input) async {
     if (input.isEmpty) {
       setState(() => _searchSuggestions = []);
       return;
     }
 
-    // Check if current position is available
     if (_currentPosition == null) {
       debugPrint('Current position not available for autocomplete');
       setState(() => _searchSuggestions = []);
@@ -257,7 +309,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           '&types=establishment'
           '&keyword=hospital'
           '&location=${_currentPosition!.latitude},${_currentPosition!.longitude}'
-          '&radius=10000'
+          '&radius=15000'
           '&strictbounds'
           '&key=$_googleApiKey',
     );
@@ -268,24 +320,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final data = json.decode(resp.body);
         final predictions = (data['predictions'] as List?) ?? [];
 
-        // 🏥 Filter to show only hospital-related suggestions
         final hospitalSuggestions = predictions.where((prediction) {
           final description = (prediction['description'] ?? '').toString().toLowerCase();
           final types = (prediction['types'] as List?) ?? [];
 
-          // Check if types contain hospital-related types
-          final hasHospitalType = types.any((type) =>
-          type.toString().toLowerCase().contains('hospital') ||
-              type.toString().toLowerCase().contains('health') ||
-              type.toString().toLowerCase().contains('medical')
-          );
-
-          // Check if description contains hospital-related keywords
-          final hasHospitalKeyword = _hospitalKeywords.any((keyword) =>
-              description.contains(keyword.toLowerCase())
-          );
-
-          return hasHospitalType || hasHospitalKeyword;
+          // Enhanced filtering for autocomplete suggestions
+          return _isValidHospital(description, types.map((e) => e.toString()).toList());
         }).toList();
 
         setState(() {
@@ -327,6 +367,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final latLngMatch = RegExp(r'^\s*([-+]?\d+(\.\d+)?),\s*([-+]?\d+(\.\d+)?)\s*$')
         .firstMatch(text);
+
     if (latLngMatch != null) {
       final lat = double.tryParse(latLngMatch.group(1)!);
       final lng = double.tryParse(latLngMatch.group(3)!);
@@ -388,6 +429,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Text(
                       name,
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 8),
                     Row(
@@ -435,6 +478,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Header with ambulance ID and theme toggle
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -451,83 +495,86 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ],
               ),
-
               const SizedBox(height: 12),
 
-              // 🔎 Destination input with autocomplete
-              Column(
-                children: [
-                  TextField(
-                    controller: _destinationController,
-                    onChanged: (value) {
-                      if (_debounce?.isActive ?? false) _debounce!.cancel();
-                      _debounce = Timer(const Duration(milliseconds: 500), () {
-                        _fetchSearchSuggestions(value);
-                      });
-                    },
-                    decoration: InputDecoration(
-                      hintText: "Enter hospital destination",
-                      prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                  ),
-
-                  if (_searchSuggestions.isNotEmpty)
-                    Container(
-                      margin: const EdgeInsets.only(top: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
-                      ),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: _searchSuggestions.length,
-                        itemBuilder: (context, index) {
-                          final suggestion = _searchSuggestions[index];
-                          final description = suggestion['description'] ?? '';
-                          return ListTile(
-                            title: Text(description),
-                            onTap: () async {
-                              _destinationController.text = description;
-                              setState(() => _searchSuggestions = []);
-
-                              final placeId = suggestion['place_id'];
-                              final detailsUrl = Uri.parse(
-                                'https://maps.googleapis.com/maps/api/place/details/json'
-                                    '?place_id=$placeId&key=$_googleApiKey',
-                              );
-                              final detailsResp = await http.get(detailsUrl);
-                              if (detailsResp.statusCode == 200) {
-                                final detailsData = json.decode(detailsResp.body);
-                                final loc = detailsData['result']['geometry']['location'];
-                                final lat = loc['lat'];
-                                final lng = loc['lng'];
-
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => RouteNavigationScreen(
-                                      ambulanceId: widget.ambulanceId,
-                                      destination: description,
-                                      destinationLat: lat,
-                                      destinationLng: lng,
-                                      onToggleTheme: widget.onToggleTheme,
-                                    ),
-                                  ),
-                                );
-                              }
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                ],
+              // Destination input with enhanced autocomplete
+              TextField(
+                controller: _destinationController,
+                onChanged: (value) {
+                  if (_debounce?.isActive ?? false) _debounce!.cancel();
+                  _debounce = Timer(const Duration(milliseconds: 500), () {
+                    _fetchSearchSuggestions(value);
+                  });
+                },
+                decoration: InputDecoration(
+                  hintText: "Enter hospital destination",
+                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
               ),
 
+              // Search suggestions dropdown
+              if (_searchSuggestions.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(top: 4),
+                  constraints: const BoxConstraints(maxHeight: 200),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor,
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                  ),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _searchSuggestions.length,
+                    itemBuilder: (context, index) {
+                      final suggestion = _searchSuggestions[index];
+                      final description = suggestion['description'] ?? '';
+
+                      return ListTile(
+                        title: Text(
+                          description,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () async {
+                          _destinationController.text = description;
+                          setState(() => _searchSuggestions = []);
+
+                          final placeId = suggestion['place_id'];
+                          final detailsUrl = Uri.parse(
+                            'https://maps.googleapis.com/maps/api/place/details/json'
+                                '?place_id=$placeId&key=$_googleApiKey',
+                          );
+
+                          final detailsResp = await http.get(detailsUrl);
+                          if (detailsResp.statusCode == 200) {
+                            final detailsData = json.decode(detailsResp.body);
+                            final loc = detailsData['result']['geometry']['location'];
+                            final lat = loc['lat'];
+                            final lng = loc['lng'];
+
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => RouteNavigationScreen(
+                                  ambulanceId: widget.ambulanceId,
+                                  destination: description,
+                                  destinationLat: lat,
+                                  destinationLng: lng,
+                                  onToggleTheme: widget.onToggleTheme,
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                      );
+                    },
+                  ),
+                ),
               const SizedBox(height: 12),
 
+              // Start Trip button
               GestureDetector(
                 onTapDown: (_) => setState(() => _isButtonPressed = true),
                 onTapUp: (_) {
@@ -548,9 +595,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: const Text('Start Trip', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
-
               const SizedBox(height: 18),
 
+              // Nearby Hospitals header
               Row(
                 children: [
                   const Text('Nearby Hospitals', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -562,15 +609,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ],
               ),
-
               const SizedBox(height: 6),
 
+              // FIXED: Hospital list with Expanded to fill remaining space
               Expanded(
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : nearbyHospitals.isEmpty
-                    ? const Center(child: Text('No hospitals found', style: TextStyle(color: Colors.grey)))
+                    ? const Center(child: Text('No emergency hospitals found nearby', style: TextStyle(color: Colors.grey)))
                     : ListView.builder(
+                  padding: EdgeInsets.zero, // Remove default padding
                   itemCount: nearbyHospitals.length,
                   itemBuilder: (context, index) {
                     final hospital = nearbyHospitals[index];
@@ -583,5 +631,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _destinationController.dispose();
+    super.dispose();
   }
 }
