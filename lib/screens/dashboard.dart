@@ -39,6 +39,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'multi specialty',
   ];
 
+  // Keywords to identify hospital suggestions
+  final List<String> _hospitalKeywords = [
+    'hospital',
+    'medical',
+    'clinic',
+    'health',
+    'care',
+    'specialty',
+    'emergency',
+    'medical center',
+    'healthcare',
+    'nursing home',
+    'rehabilitation',
+    'cardiac',
+    'cancer',
+    'diagnostic',
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -227,9 +245,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // 🔎 Fetch autocomplete suggestions
+  // 🔎 Fetch autocomplete suggestions (NEARBY HOSPITALS ONLY)
   Future<void> _fetchSearchSuggestions(String input) async {
     if (input.isEmpty) {
+      setState(() => _searchSuggestions = []);
+      return;
+    }
+
+    // Check if current position is available
+    if (_currentPosition == null) {
+      debugPrint('Current position not available for autocomplete');
       setState(() => _searchSuggestions = []);
       return;
     }
@@ -239,6 +264,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           '?input=$input'
           '&types=establishment'
           '&keyword=hospital'
+          '&location=${_currentPosition!.latitude},${_currentPosition!.longitude}'
+          '&radius=10000'
+          '&strictbounds'
           '&key=$_googleApiKey',
     );
 
@@ -246,12 +274,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final resp = await http.get(url);
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body);
+        final predictions = (data['predictions'] as List?) ?? [];
+
+        // 🏥 Filter to show only hospital-related suggestions
+        final hospitalSuggestions = predictions.where((prediction) {
+          final description = (prediction['description'] ?? '').toString().toLowerCase();
+          final types = (prediction['types'] as List?) ?? [];
+
+          // Check if types contain hospital-related types
+          final hasHospitalType = types.any((type) =>
+          type.toString().toLowerCase().contains('hospital') ||
+              type.toString().toLowerCase().contains('health') ||
+              type.toString().toLowerCase().contains('medical')
+          );
+
+          // Check if description contains hospital-related keywords
+          final hasHospitalKeyword = _hospitalKeywords.any((keyword) =>
+              description.contains(keyword.toLowerCase())
+          );
+
+          return hasHospitalType || hasHospitalKeyword;
+        }).toList();
+
         setState(() {
-          _searchSuggestions = data['predictions'] ?? [];
+          _searchSuggestions = hospitalSuggestions;
         });
+      } else {
+        debugPrint('Autocomplete API error: ${resp.statusCode} - ${resp.body}');
+        setState(() => _searchSuggestions = []);
       }
     } catch (e) {
       debugPrint('Autocomplete error: $e');
+      setState(() => _searchSuggestions = []);
     }
   }
 
