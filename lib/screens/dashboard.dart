@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'route_navigation.dart';
+import 'dart:async';
 
 class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
@@ -26,7 +27,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Position? _currentPosition;
   List<Map<String, dynamic>> nearbyHospitals = [];
-
+  Timer? _debounce;
   // Suggestions from Google Places Autocomplete
   List<dynamic> _searchSuggestions = [];
 
@@ -42,19 +43,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // Keywords to identify hospital suggestions
   final List<String> _hospitalKeywords = [
     'hospital',
-    'medical',
-    'clinic',
-    'health',
-    'care',
     'specialty',
     'emergency',
     'medical center',
     'healthcare',
-    'nursing home',
-    'rehabilitation',
-    'cardiac',
-    'cancer',
-    'diagnostic',
   ];
 
   @override
@@ -467,7 +459,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 children: [
                   TextField(
                     controller: _destinationController,
-                    onChanged: _fetchSearchSuggestions,
+                    onChanged: (value) {
+                      if (_debounce?.isActive ?? false) _debounce!.cancel();
+                      _debounce = Timer(const Duration(milliseconds: 500), () {
+                        _fetchSearchSuggestions(value);
+                      });
+                    },
                     decoration: InputDecoration(
                       hintText: "Enter hospital destination",
                       prefixIcon: const Icon(Icons.search, color: Colors.grey),
@@ -475,6 +472,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     ),
                   ),
+
                   if (_searchSuggestions.isNotEmpty)
                     Container(
                       margin: const EdgeInsets.only(top: 4),
