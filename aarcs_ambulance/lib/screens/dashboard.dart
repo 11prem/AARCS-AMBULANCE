@@ -52,6 +52,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'medical centre',
     'healthcare center',
     'healthcare centre',
+    'bethesda hospital and child care centre',
+    'annai theresa hospital'
   ];
 
   // Keywords to EXCLUDE specialized clinics and non-emergency facilities
@@ -60,7 +62,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'skin', 'dermatology', 'cosmetic', 'beauty',
     'eye', 'optical', 'vision', 'lasik',
     'ent', 'ear nose throat',
-    'fertility', 'ivf',
+    'fertility', 'ivf','care'
     'psychiatry', 'psychology', 'mental health',
     'physiotherapy', 'rehab', 'rehabilitation',
     'ayurveda', 'homeopathy',
@@ -68,18 +70,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'pharmacy', 'medical store',
     'clinic', 'polyclinic',
     'veterinary', 'pet',
-    'nursing home',
+    'nursing home', 'derby','medicity'
   ];
 
   // Keywords to identify hospital suggestions for autocomplete
   final List<String> _hospitalKeywords = [
     'hospital',
-    'specialty',
+    'speciality',
     'emergency',
     'medical center',
     'medical centre',
     'healthcare',
-    'trauma',
+    'bethesda hospital',
+    'annai theresa'
   ];
 
   @override
@@ -156,6 +159,54 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return nameMatch || (typeMatch && !nameLower.contains('clinic'));
   }
 
+  // NEW: Function to get detailed place information including opening hours
+  Future<Map<String, dynamic>?> _getPlaceDetails(String placeId) async {
+    final detailsUrl = Uri.parse(
+        'https://maps.googleapis.com/maps/api/place/details/json'
+            '?place_id=$placeId'
+            '&fields=opening_hours,current_opening_hours'
+            '&key=$_googleApiKey'
+    );
+
+    try {
+      final resp = await http.get(detailsUrl);
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
+        if (data['status'] == 'OK' && data['result'] != null) {
+          return data['result'];
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching place details for $placeId: $e');
+    }
+    return null;
+  }
+
+  // NEW: Function to determine opening status from opening hours data
+  Map<String, dynamic> _getOpeningStatus(Map<String, dynamic>? openingHours, Map<String, dynamic>? currentOpeningHours) {
+    // Check current_opening_hours first (more accurate for current status)
+    if (currentOpeningHours != null && currentOpeningHours.containsKey('open_now')) {
+      return {
+        'isOpen': currentOpeningHours['open_now'] as bool,
+        'isKnown': true,
+      };
+    }
+
+    // Fallback to regular opening_hours
+    if (openingHours != null && openingHours.containsKey('open_now')) {
+      return {
+        'isOpen': openingHours['open_now'] as bool,
+        'isKnown': true,
+      };
+    }
+
+    // No opening hours data available
+    return {
+      'isOpen': false,
+      'isKnown': false,
+    };
+  }
+
   Future<void> _fetchNearbyHospitals() async {
     nearbyHospitals = [];
     if (_currentPosition == null) {
@@ -222,6 +273,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
           lng,
         );
 
+        // NEW: Get opening hours information
+        Map<String, dynamic> openingStatus = {
+          'isOpen': false,
+          'isKnown': false,
+        };
+
+        // First check if basic opening_hours is available in nearby search response
+        if (place['opening_hours'] != null) {
+          openingStatus = _getOpeningStatus(place['opening_hours'], null);
+        } else {
+          // If not available in nearby search, fetch detailed place information
+          final placeDetails = await _getPlaceDetails(placeId);
+          if (placeDetails != null) {
+            openingStatus = _getOpeningStatus(
+                placeDetails['opening_hours'],
+                placeDetails['current_opening_hours']
+            );
+          }
+        }
+
         hospitals.add({
           'name': name,
           'place_id': placeId,
@@ -231,6 +302,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           'rating': rating,
           'distance_m': distanceMeters,
           'distance_text': (distanceMeters / 1000).toStringAsFixed(2) + ' km',
+          'isOpen': openingStatus['isOpen'],
+          'isOpeningStatusKnown': openingStatus['isKnown'],
         });
       }
 
@@ -407,60 +480,166 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  // UPDATED GRADIENT CARD WITH ACCURATE OPENING STATUS
   Widget _buildHospitalCard(Map<String, dynamic> hospital) {
     final name = hospital['name'] ?? '--';
     final distanceText = (hospital['distance_text'] ?? '--').toString();
     final durationText = (hospital['duration_text'] ?? '--').toString();
+    final rating = hospital['rating'] ?? 0.0;
+    final bool isOpen = hospital['isOpen'] ?? false;
+    final bool isStatusKnown = hospital['isOpeningStatusKnown'] ?? false;
 
-    return InkWell(
-      onTap: () => _openRouteScreenWithHospital(hospital),
-      child: Card(
-        color: Theme.of(context).cardColor,
-        elevation: 3,
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14.0, horizontal: 16.0),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.red.shade50,
+            Colors.white,
+            Colors.blue.shade50,
+          ],
+          stops: const [0.0, 0.5, 1.0],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _openRouteScreenWithHospital(hospital),
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
                   children: [
-                    Text(
-                      name,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(Icons.local_hospital, color: Colors.red.shade600, size: 24),
                     ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(Icons.place, size: 14, color: Colors.grey),
-                        const SizedBox(width: 6),
-                        Text(
-                          distanceText,
-                          style: const TextStyle(fontSize: 13, color: Colors.grey),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(Icons.star, size: 14, color: Colors.orange.shade600),
+                              const SizedBox(width: 4),
+                              Text(
+                                rating > 0 ? rating.toStringAsFixed(1) : 'N/A',
+                                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    // UPDATED: Dynamic status indicator based on actual opening hours
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: !isStatusKnown
+                            ? Colors.grey.shade100
+                            : isOpen
+                            ? Colors.green.shade100
+                            : Colors.red.shade100,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: !isStatusKnown
+                              ? Colors.grey.shade300
+                              : isOpen
+                              ? Colors.green.shade300
+                              : Colors.red.shade300,
                         ),
-                      ],
+                      ),
+                      child: Text(
+                        !isStatusKnown
+                            ? 'UNKNOWN'
+                            : isOpen
+                            ? 'OPEN'
+                            : 'CLOSED',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: !isStatusKnown
+                              ? Colors.grey.shade700
+                              : isOpen
+                              ? Colors.green.shade700
+                              : Colors.red.shade700,
+                        ),
+                      ),
                     ),
                   ],
                 ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  const Text(
-                    'ETA',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    durationText,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Icon(Icons.directions_car, size: 16, color: Colors.blue.shade600),
+                            const SizedBox(width: 6),
+                            Text(
+                              distanceText,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade600,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          durationText,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -611,7 +790,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 6),
 
-              // FIXED: Hospital list with Expanded to fill remaining space
+              // Hospital list with Expanded to fill remaining space
               Expanded(
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator())
