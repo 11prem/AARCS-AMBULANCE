@@ -10,15 +10,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="09ab5d6f-3528-4958-99f3-8e70c7455b13" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change afterPath="$PROJECT_DIR$/aarcs_traffic-police" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/route_navigation.dart" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/route_navigation.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/macos/Flutter/GeneratedPluginRegistrant.swift" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/macos/Flutter/GeneratedPluginRegistrant.swift" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/pubspec.lock" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/pubspec.lock" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/pubspec.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/pubspec.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/windows/flutter/generated_plugin_registrant.cc" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/windows/flutter/generated_plugin_registrant.cc" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/windows/flutter/generated_plugins.cmake" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/windows/flutter/generated_plugins.cmake" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -71,7 +63,7 @@
     "cf.first.check.clang-format": "false",
     "cidr.known.project.marker": "true",
     "dart.analysis.tool.window.visible": "false",
-    "git-widget-placeholder": "ambulance",
+    "git-widget-placeholder": "traffic__police",
     "ignore.virus.scanning.warn.message": "true",
     "io.flutter.reload.alreadyRun": "true",
     "last_opened_file_path": "D:/AARCS",
