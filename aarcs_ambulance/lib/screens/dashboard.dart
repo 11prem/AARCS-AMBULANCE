@@ -63,7 +63,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'eye', 'optical', 'vision', 'lasik',
     'ent', 'ear nose throat',
     'fertility', 'ivf','care'
-    'psychiatry', 'psychology', 'mental health',
+        'psychiatry', 'psychology', 'mental health',
     'physiotherapy', 'rehab', 'rehabilitation',
     'ayurveda', 'homeopathy',
     'diagnostic', 'lab', 'pathology',
