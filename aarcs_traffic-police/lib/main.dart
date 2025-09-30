@@ -1,7 +1,6 @@
-git import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/dashboard.dart';
-
 
 void main() {
   runApp(const MyApp());
@@ -46,7 +45,6 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
-
 class LoginScreen extends StatefulWidget {
   final VoidCallback onToggleTheme;
   final bool isDark;
@@ -90,11 +88,9 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedRememberMe = prefs.getBool(_rememberMeKey) ?? false;
-
       if (savedRememberMe) {
         final savedId = prefs.getString(_policeIdKey) ?? '';
         final savedPassword = prefs.getString(_passwordKey) ?? '';
-
         setState(() {
           _idController.text = savedId;
           _passwordController.text = savedPassword;
@@ -110,7 +106,6 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _saveCredentials() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-
       if (_rememberMe) {
         // Save credentials if Remember Me is checked
         await prefs.setString(_policeIdKey, _idController.text.trim());
@@ -145,7 +140,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (validCredentials.containsKey(id) &&
         validCredentials[id] == password) {
-
       // Save credentials based on Remember Me checkbox state
       await _saveCredentials();
 
@@ -164,7 +158,6 @@ class _LoginScreenState extends State<LoginScreen> {
           _passwordController.clear();
         }
       }
-
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -197,7 +190,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: widget.onToggleTheme,
                   ),
                 ),
-
                 // 🚔 Logo
                 CircleAvatar(
                   radius: 40,
@@ -218,19 +210,16 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: TextStyle(fontSize: 16, color: Colors.grey),
                 ),
                 const SizedBox(height: 30),
-
                 // Police ID
                 TextField(
                   controller: _idController,
                   decoration: const InputDecoration(
                     labelText: "Police ID",
-                    prefixIcon: Icon(Icons.badge,
-                        color: Colors.blue),
+                    prefixIcon: Icon(Icons.badge, color: Colors.blue),
                     border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 20),
-
                 // Password
                 TextField(
                   controller: _passwordController,
@@ -256,7 +245,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 const SizedBox(height: 10),
-
                 Row(
                   children: [
                     Checkbox(
@@ -276,7 +264,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
                 ),
                 const SizedBox(height: 20),
-
                 GestureDetector(
                   onTapDown: (_) {
                     setState(() {

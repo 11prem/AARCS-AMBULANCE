@@ -1,10 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'dart:async';
+import 'dart:math' as math;
 
 class EmergencyResponseScreen extends StatefulWidget {
   final Map<String, dynamic> emergencyRequest;
@@ -15,95 +16,148 @@ class EmergencyResponseScreen extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  _EmergencyResponseScreenState createState() => _EmergencyResponseScreenState();
+  _EmergencyResponseScreenState createState() =>
+      _EmergencyResponseScreenState();
 }
 
 class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
-  late GoogleMapController mapController;
-  late Timer _timer;
+  // Controllers
+  GoogleMapController? _mapController;
+  Timer? _timer;
+
+  // Stopwatch state
   int _seconds = 0;
-  String _formattedTime = '00:00';
+  String get _formattedTime =>
+      '${(_seconds ~/ 60).toString().padLeft(2, '0')}:${(_seconds % 60).toString().padLeft(2, '0')}';
 
-  // Google API Key
-  static const String googleApiKey = '***REMOVED***';
+  // Google Maps data
+  static const String _googleApiKey = '***REMOVED***';
+  final PolylinePoints _polylinePoints = PolylinePoints();
+  final Set<Marker> _markers = {};
+  final Set<Polyline> _polylines = {};
+  final List<LatLng> _routeCoordinates = [];
 
-  PolylinePoints polylinePoints = PolylinePoints();
-  Set<Marker> _markers = {};
-  Set<Polyline> _polylines = {};
-  LatLng? _sourceLocation;
+  // Real-time location data
+  LatLng? _currentLocation;
   LatLng? _destinationLocation;
-  List<LatLng> _routeCoordinates = [];
+  String? _estimatedTime;
+  String? _distance;
+
+  // Your specific addresses
+  final String _currentAddress = "21st cross street, Padmavathy nagar main rd, padmavathy nagar, madambakkam, chennai, tamil nadu 600126";
+  final String _destinationAddress = "Bharath Hospital, 72, 1st Main Road, Nanganallur, Chennai, Tamil Nadu 600061";
+
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _startTimer();
-    _initializeLocations();
+    _initializeRealTimeLocations();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _mapController?.dispose();
+    super.dispose();
   }
 
   void _startTimer() {
-    _timer = Timer.periodic(Duration(seconds: 1), (timer) {
-      setState(() {
-        _seconds++;
-        final minutes = (_seconds ~/ 60).toString().padLeft(2, '0');
-        final seconds = (_seconds % 60).toString().padLeft(2, '0');
-        _formattedTime = '$minutes:$seconds';
-      });
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _seconds++);
     });
   }
 
-  void _initializeLocations() {
-    // Get coordinates from emergency request data
-    final sourceCoords = widget.emergencyRequest['sourceCoords'];
-    final destCoords = widget.emergencyRequest['destCoords'];
+  // Convert addresses to coordinates using Google Geocoding API
+  Future<LatLng?> _getCoordinatesFromAddress(String address) async {
+    final encodedAddress = Uri.encodeComponent(address);
+    final url = 'https://maps.googleapis.com/maps/api/geocode/json?address=$encodedAddress&key=$_googleApiKey';
 
-    _sourceLocation = LatLng(
-        sourceCoords['lat'].toDouble(),
-        sourceCoords['lng'].toDouble()
-    );
-    _destinationLocation = LatLng(
-        destCoords['lat'].toDouble(),
-        destCoords['lng'].toDouble()
-    );
+    try {
+      final response = await http.get(Uri.parse(url));
 
-    // Add markers
-    _markers.add(
-      Marker(
-        markerId: const MarkerId('source'),
-        position: _sourceLocation!,
-        infoWindow: InfoWindow(
-            title: 'Ambulance Location',
-            snippet: widget.emergencyRequest['currentLocation']
-        ),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-      ),
-    );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
 
-    _markers.add(
-      Marker(
-        markerId: const MarkerId('destination'),
-        position: _destinationLocation!,
-        infoWindow: InfoWindow(
-            title: 'Destination',
-            snippet: widget.emergencyRequest['destination']
-        ),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-      ),
-    );
-
-    // ✅ GET ACCURATE ROUTE FROM GOOGLE DIRECTIONS API
-    _getDirectionsRoute();
+        if (data['status'] == 'OK' && data['results'].isNotEmpty) {
+          final location = data['results'][0]['geometry']['location'];
+          return LatLng(location['lat'], location['lng']);
+        }
+      }
+    } catch (e) {
+      print('Geocoding error: $e');
+    }
+    return null;
   }
 
-  // ✅ ACCURATE ROUTE USING GOOGLE DIRECTIONS API
-  Future<void> _getDirectionsRoute() async {
+  Future<void> _initializeRealTimeLocations() async {
     try {
-      final String url =
-          'https://maps.googleapis.com/maps/api/directions/json?'
-          'origin=${_sourceLocation!.latitude},${_sourceLocation!.longitude}&'
-          'destination=${_destinationLocation!.latitude},${_destinationLocation!.longitude}&'
-          'key=$googleApiKey';
+      // Get coordinates from your specific addresses
+      _currentLocation = await _getCoordinatesFromAddress(_currentAddress);
+      _destinationLocation = await _getCoordinatesFromAddress(_destinationAddress);
 
+      // Fallback coordinates if geocoding fails
+      _currentLocation ??= const LatLng(12.8546, 80.0783); // Madambakkam area
+      _destinationLocation ??= const LatLng(12.9698, 80.2070); // Bharath Hospital Nanganallur
+
+      if (mounted) {
+        _addMarkers();
+        await _getDirectionsRoute();
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showSnackBar('Error loading locations: $e');
+      }
+    }
+  }
+
+  void _addMarkers() {
+    _markers.clear();
+
+    if (_currentLocation != null) {
+      _markers.add(
+        Marker(
+          markerId: const MarkerId('current_location'),
+          position: _currentLocation!,
+          infoWindow: const InfoWindow(
+            title: 'Ambulance Location',
+            snippet: 'Padmavathy Nagar, Madambakkam',
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        ),
+      );
+    }
+
+    if (_destinationLocation != null) {
+      _markers.add(
+        Marker(
+          markerId: const MarkerId('destination'),
+          position: _destinationLocation!,
+          infoWindow: const InfoWindow(
+            title: 'Bharath Hospital',
+            snippet: 'Nanganallur, Chennai - 600061',
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        ),
+      );
+    }
+  }
+
+  Future<void> _getDirectionsRoute() async {
+    if (_currentLocation == null || _destinationLocation == null) return;
+
+    final url = 'https://maps.googleapis.com/maps/api/directions/json?'
+        'origin=${_currentLocation!.latitude},${_currentLocation!.longitude}&'
+        'destination=${_destinationLocation!.latitude},${_destinationLocation!.longitude}&'
+        'mode=driving&'
+        'traffic_model=best_guess&'
+        'departure_time=now&'
+        'key=$_googleApiKey';
+
+    try {
       final response = await http.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
@@ -111,98 +165,144 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
 
         if (data['status'] == 'OK' && data['routes'].isNotEmpty) {
           final route = data['routes'][0];
-          final polylineString = route['overview_polyline']['points'];
 
-          // Decode polyline points
-          final List<PointLatLng> polylineCoords =
-          polylinePoints.decodePolyline(polylineString);
+          // Get route polyline
+          final points = route['overview_polyline']['points'];
+          final decoded = _polylinePoints.decodePolyline(points);
 
-          // Convert to LatLng list
-          _routeCoordinates = polylineCoords
-              .map((point) => LatLng(point.latitude, point.longitude))
-              .toList();
+          _routeCoordinates.clear();
+          _routeCoordinates.addAll(
+              decoded.map((p) => LatLng(p.latitude, p.longitude)).toList()
+          );
 
-          // Create accurate polyline
-          setState(() {
-            _polylines.add(
-              Polyline(
-                polylineId: const PolylineId('accurate_route'),
-                points: _routeCoordinates,
-                color: Colors.red,
-                width: 5,
-                patterns: [PatternItem.dash(20), PatternItem.gap(10)],
-              ),
-            );
-          });
+          // Extract distance and duration
+          final leg = route['legs'][0];
+          _distance = leg['distance']['text'];
+          _estimatedTime = leg['duration_in_traffic']?['text'] ?? leg['duration']['text'];
+
+          _polylines.clear();
+          _polylines.add(
+            Polyline(
+              polylineId: const PolylineId('route'),
+              points: _routeCoordinates,
+              color: Colors.blue,
+              width: 6,
+            ),
+          );
+
+          if (mounted) {
+            setState(() {});
+            _fitCameraToRoute();
+          }
+          return;
         }
       }
     } catch (e) {
-      print('Error getting directions: $e');
-      // Fallback to straight line if API fails
-      _createFallbackRoute();
+      print('Directions error: $e');
     }
+
+    // Fallback: direct line if API fails
+    _createFallbackRoute();
   }
 
   void _createFallbackRoute() {
-    setState(() {
-      _polylines.add(
-        Polyline(
-          polylineId: const PolylineId('fallback_route'),
-          points: [_sourceLocation!, _destinationLocation!],
-          color: Colors.red,
-          width: 5,
-          patterns: [PatternItem.dash(20), PatternItem.gap(10)],
-        ),
-      );
-    });
+    if (_currentLocation == null || _destinationLocation == null) return;
+
+    _polylines.clear();
+    _polylines.add(
+      Polyline(
+        polylineId: const PolylineId('fallback'),
+        points: [_currentLocation!, _destinationLocation!],
+        color: Colors.blue,
+        width: 6,
+      ),
+    );
+
+    // Calculate approximate distance using Haversine formula
+    final distanceInMeters = _calculateDistance(
+      _currentLocation!.latitude,
+      _currentLocation!.longitude,
+      _destinationLocation!.latitude,
+      _destinationLocation!.longitude,
+    );
+
+    _distance = '${(distanceInMeters / 1000).toStringAsFixed(1)} km';
+    _estimatedTime = '${((distanceInMeters / 1000) / 30 * 60).round()} min'; // Assuming 30 km/h average
+
+    if (mounted) setState(() {});
   }
 
-  @override
-  void dispose() {
-    _timer.cancel();
-    super.dispose();
+  // Calculate distance between two points using Haversine formula
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    const double earthRadius = 6371000; // Earth radius in meters
+
+    double dLat = _toRadians(lat2 - lat1);
+    double dLon = _toRadians(lon2 - lon1);
+
+    double a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(lat1)) * math.cos(_toRadians(lat2)) *
+            math.sin(dLon / 2) * math.sin(dLon / 2);
+
+    double c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+
+    return earthRadius * c;
   }
 
-  void _onMapCreated(GoogleMapController controller) {
-    mapController = controller;
+  double _toRadians(double degrees) {
+    return degrees * (math.pi / 180);
+  }
 
-    // Fit bounds to show both markers
-    if (_sourceLocation != null && _destinationLocation != null) {
-      final bounds = LatLngBounds(
-        southwest: LatLng(
-          _sourceLocation!.latitude < _destinationLocation!.latitude
-              ? _sourceLocation!.latitude : _destinationLocation!.latitude,
-          _sourceLocation!.longitude < _destinationLocation!.longitude
-              ? _sourceLocation!.longitude : _destinationLocation!.longitude,
-        ),
-        northeast: LatLng(
-          _sourceLocation!.latitude > _destinationLocation!.latitude
-              ? _sourceLocation!.latitude : _destinationLocation!.latitude,
-          _sourceLocation!.longitude > _destinationLocation!.longitude
-              ? _sourceLocation!.longitude : _destinationLocation!.longitude,
-        ),
-      );
+  void _fitCameraToRoute() {
+    if (_routeCoordinates.isEmpty || _mapController == null) return;
 
-      // Add padding for better view
-      controller.animateCamera(
-          CameraUpdate.newLatLngBounds(bounds, 100.0)
-      );
+    double minLat = _routeCoordinates.first.latitude;
+    double maxLat = minLat;
+    double minLng = _routeCoordinates.first.longitude;
+    double maxLng = minLng;
+
+    for (final point in _routeCoordinates) {
+      minLat = point.latitude < minLat ? point.latitude : minLat;
+      maxLat = point.latitude > maxLat ? point.latitude : maxLat;
+      minLng = point.longitude < minLng ? point.longitude : minLng;
+      maxLng = point.longitude > maxLng ? point.longitude : maxLng;
     }
+
+    final bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
+
+    _mapController!.animateCamera(
+      CameraUpdate.newLatLngBounds(bounds, 100),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Loading real-time route...'),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.grey[50],
       body: SafeArea(
         child: Column(
           children: [
             _buildHeader(),
-            _buildAlertMessage(),
-            Expanded(
-              child: _buildMap(),
-            ),
-            _buildControlButtons(),
+            _buildRouteInfo(),
+            Expanded(child: _buildMap()),
+            _buildControls(),
           ],
         ),
       ),
@@ -211,14 +311,12 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
 
   Widget _buildHeader() {
     return Container(
-      width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
           BoxShadow(
             color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
             blurRadius: 3,
             offset: const Offset(0, 2),
           ),
@@ -230,31 +328,27 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
             icon: const Icon(Icons.arrow_back, color: Colors.black87),
             onPressed: () => Navigator.pop(context),
           ),
-          Expanded(
+          const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Emergency Response Active',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.black87,
                   ),
                 ),
-                const SizedBox(height: 2),
+                SizedBox(height: 2),
                 Text(
-                  'Officer: Inspector Raggul J',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
+                  'Route: Madambakkam → Bharath Hospital',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: Colors.red,
               borderRadius: BorderRadius.circular(12),
@@ -263,8 +357,8 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
               _formattedTime,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 14,
                 fontWeight: FontWeight.bold,
+                fontSize: 16,
               ),
             ),
           ),
@@ -273,32 +367,40 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
     );
   }
 
-  Widget _buildAlertMessage() {
+  Widget _buildRouteInfo() {
     return Container(
-      width: double.infinity,
       margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.green[50],
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.green[200]!),
       ),
       child: Row(
         children: [
-          Icon(
-            Icons.circle,
-            color: Colors.green,
-            size: 8,
-          ),
-          const SizedBox(width: 8),
+          const Icon(Icons.navigation, color: Colors.green, size: 24),
+          const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              'Ambulance approaching your zone. Clear traffic for emergency passage.',
-              style: TextStyle(
-                color: Colors.green[700],
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Distance: ${_distance ?? "Calculating..."} • ETA: ${_estimatedTime ?? "Calculating..."}',
+                  style: TextStyle(
+                    color: Colors.green[700],
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Real-time traffic route to Bharath Hospital',
+                  style: TextStyle(
+                    color: Colors.green[600],
+                    fontSize: 12,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -307,74 +409,64 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
   }
 
   Widget _buildMap() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: GoogleMap(
-          onMapCreated: _onMapCreated,
-          initialCameraPosition: CameraPosition(
-            target: _sourceLocation ?? const LatLng(12.9716, 77.5946),
-            zoom: 12.0,
-          ),
-          markers: _markers,
-          polylines: _polylines,
-          mapType: MapType.normal,
-          zoomControlsEnabled: false,
-          compassEnabled: true,
-          tiltGesturesEnabled: true,
-          rotateGesturesEnabled: true,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: GoogleMap(
+        onMapCreated: (controller) => _mapController = controller,
+        initialCameraPosition: CameraPosition(
+          target: _currentLocation ?? const LatLng(12.8546, 80.0783),
+          zoom: 12,
         ),
+        markers: _markers,
+        polylines: _polylines,
+        mapType: MapType.normal,
+        trafficEnabled: true,
+        zoomControlsEnabled: false,
+        compassEnabled: true,
+        myLocationButtonEnabled: false,
       ),
     );
   }
 
-  Widget _buildControlButtons() {
-    return Container(
+  Widget _buildControls() {
+    return Padding(
       padding: const EdgeInsets.all(16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _buildControlButton(
+          _controlBtn(
             icon: Icons.my_location,
-            label: 'Center',
+            label: 'Current',
             onPressed: () {
-              if (_sourceLocation != null) {
-                mapController.animateCamera(
-                  CameraUpdate.newLatLng(_sourceLocation!),
+              if (_currentLocation != null && _mapController != null) {
+                _mapController!.animateCamera(
+                  CameraUpdate.newLatLngZoom(_currentLocation!, 15),
                 );
               }
             },
           ),
-          _buildControlButton(
-            icon: Icons.layers,
-            label: 'Layers',
+          _controlBtn(
+            icon: Icons.local_hospital,
+            label: 'Hospital',
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Map layers feature coming soon'),
-                  duration: Duration(seconds: 1),
-                ),
-              );
+              if (_destinationLocation != null && _mapController != null) {
+                _mapController!.animateCamera(
+                  CameraUpdate.newLatLngZoom(_destinationLocation!, 15),
+                );
+              }
             },
           ),
-          _buildControlButton(
-            icon: Icons.zoom_in,
-            label: 'Zoom',
-            onPressed: () {
-              mapController.animateCamera(CameraUpdate.zoomIn());
-            },
+          _controlBtn(
+            icon: Icons.route,
+            label: 'Full Route',
+            onPressed: () => _fitCameraToRoute(),
           ),
-          _buildControlButton(
-            icon: Icons.search,
-            label: 'Search',
+          _controlBtn(
+            icon: Icons.refresh,
+            label: 'Refresh',
             onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Search feature coming soon'),
-                  duration: Duration(seconds: 1),
-                ),
-              );
+              setState(() => _isLoading = true);
+              _getDirectionsRoute();
             },
           ),
         ],
@@ -382,7 +474,7 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
     );
   }
 
-  Widget _buildControlButton({
+  Widget _controlBtn({
     required IconData icon,
     required String label,
     required VoidCallback onPressed,
@@ -390,30 +482,28 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
+        SizedBox(
           width: 48,
           height: 48,
           child: FloatingActionButton(
-            onPressed: onPressed,
-            backgroundColor: Colors.white,
             heroTag: label,
+            backgroundColor: Colors.white,
             elevation: 2,
-            child: Icon(
-              icon,
-              color: Colors.black54,
-              size: 20,
-            ),
+            onPressed: onPressed,
+            child: Icon(icon, color: Colors.black54, size: 20),
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 10,
-            color: Colors.black54,
-          ),
-        ),
+        Text(label, style: const TextStyle(fontSize: 10)),
       ],
     );
+  }
+
+  void _showSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
   }
 }
