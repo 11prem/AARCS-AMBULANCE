@@ -8,6 +8,44 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
+// Helper class for route progress calculation
+class RouteProgressHelper {
+  static const double _earthRadius = 6371000; // meters
+
+  static double distanceHaversine(LatLng point1, LatLng point2) {
+    double lat1Rad = point1.latitude * (math.pi / 180);
+    double lat2Rad = point2.latitude * (math.pi / 180);
+    double deltaLatRad = (point2.latitude - point1.latitude) * (math.pi / 180);
+    double deltaLngRad = (point2.longitude - point1.longitude) * (math.pi / 180);
+
+    double a = math.sin(deltaLatRad / 2) * math.sin(deltaLatRad / 2) +
+        math.cos(lat1Rad) *
+            math.cos(lat2Rad) *
+            math.sin(deltaLngRad / 2) *
+            math.sin(deltaLngRad / 2);
+    double c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+
+    return _earthRadius * c;
+  }
+
+  static int findNearestPointOnRoute(LatLng currentPosition, List<LatLng> routePoints) {
+    if (routePoints.isEmpty) return 0;
+
+    double minDistance = double.infinity;
+    int nearestIndex = 0;
+
+    for (int i = 0; i < routePoints.length; i++) {
+      double distance = distanceHaversine(currentPosition, routePoints[i]);
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestIndex = i;
+      }
+    }
+
+    return nearestIndex;
+  }
+}
+
 class RouteNavigationScreen extends StatefulWidget {
   final String ambulanceId;
   final String destination;
@@ -50,9 +88,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   double _distanceToNextTurn = 0.0;
   double _currentBearing = 0.0;
 
-  // Route progress tracking
+  // Route progress tracking with dual polylines
   List<LatLng> _routePoints = [];
   int _currentRoutePointIndex = 0;
+  Timer? _routeUpdateTimer;
 
   final String _apiKey = '***REMOVED***';
   StreamSubscription<Position>? _positionSubscription;
@@ -67,6 +106,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   void dispose() {
     _positionSubscription?.cancel();
     _mapController?.dispose();
+    _routeUpdateTimer?.cancel();
     super.dispose();
   }
 
@@ -123,7 +163,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         _isLocationActive = true;
       });
     } catch (e) {
-      // Try last known position as fallback
       try {
         _currentPosition = await Geolocator.getLastKnownPosition();
         if (_currentPosition != null) {
@@ -142,7 +181,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   void _startLocationTracking() {
     const locationSettings = LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 10,
+      distanceFilter: 5, // Update every 5 meters for smooth progress
     );
 
     _positionSubscription = Geolocator.getPositionStream(
@@ -196,27 +235,64 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     // Update navigation if active
     if (_isNavigating) {
       _updateNavigationProgress(newPosition);
+      _updateRouteProgress(newPosition);
       _updateNavigationCamera();
     }
-
-    // Update markers
-    _updateCurrentLocationMarker();
   }
 
-  void _updateCurrentLocationMarker() {
-    if (_currentPosition == null) return;
+  void _updateRouteProgress(Position position) {
+    if (_routePoints.isEmpty) return;
 
-    final currentMarker = Marker(
-      markerId: const MarkerId('current_location'),
-      position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-      infoWindow: const InfoWindow(title: 'Current Location'),
-      rotation: _currentBearing,
-    );
+    // Throttle updates to prevent excessive rebuilds
+    _routeUpdateTimer?.cancel();
+    _routeUpdateTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _computeRouteSplit(LatLng(position.latitude, position.longitude));
+      }
+    });
+  }
+
+  void _computeRouteSplit(LatLng currentPos) {
+    if (_routePoints.isEmpty) return;
+
+    int nearestPointIndex = RouteProgressHelper.findNearestPointOnRoute(currentPos, _routePoints);
+
+    // Create completed polyline (grey)
+    List<LatLng> completedPoints = _routePoints.take(nearestPointIndex + 1).toList();
+
+    // Create remaining polyline (blue/red)
+    List<LatLng> remainingPoints = _routePoints.skip(nearestPointIndex).toList();
+
+    Set<Polyline> newPolylines = {};
+
+    // Add completed route (grey) if there are completed points
+    if (completedPoints.length > 1) {
+      newPolylines.add(
+        Polyline(
+          polylineId: const PolylineId('completed_route'),
+          points: completedPoints,
+          color: Colors.grey.withOpacity(0.8),
+          width: 6,
+          zIndex: 1,
+        ),
+      );
+    }
+
+    // Add remaining route (colored) if there are remaining points
+    if (remainingPoints.length > 1) {
+      newPolylines.add(
+        Polyline(
+          polylineId: const PolylineId('remaining_route'),
+          points: remainingPoints,
+          color: Colors.blue,
+          width: 6,
+          zIndex: 2,
+        ),
+      );
+    }
 
     setState(() {
-      _markers.removeWhere((marker) => marker.markerId.value == 'current_location');
-      _markers.add(currentMarker);
+      _polylines = newPolylines;
     });
   }
 
@@ -387,7 +463,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     final polylinePoints = _decodePolyline(route['overview_polyline']['points']);
     _routePoints = polylinePoints;
 
-    // Create polyline
+    // Create initial single polyline for overview (before navigation starts)
     final polyline = Polyline(
       polylineId: const PolylineId('route'),
       points: polylinePoints,
@@ -395,14 +471,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       width: 5,
     );
 
-    // Create markers
-    final startMarker = Marker(
-      markerId: const MarkerId('start'),
-      position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-      infoWindow: const InfoWindow(title: 'Start'),
-    );
-
+    // Create only destination marker (no start marker - use blue dot instead)
     final endMarker = Marker(
       markerId: const MarkerId('end'),
       position: LatLng(destLat, destLng),
@@ -412,7 +481,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
     setState(() {
       _polylines = {polyline};
-      _markers = {startMarker, endMarker};
+      _markers = {endMarker}; // Only destination marker
       _distance = distanceText;
       _eta = durationText;
       _isLoading = false;
@@ -498,21 +567,12 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     setState(() {
       _isNavigating = true;
       _currentStepIndex = 0;
-
-      // Update polyline color for navigation
-      _polylines = {
-        Polyline(
-          polylineId: const PolylineId('route'),
-          points: _routePoints,
-          color: Colors.red,
-          width: 6,
-        ),
-      };
     });
 
-    // Start navigation camera
+    // Start navigation camera and route progress tracking
     if (_currentPosition != null) {
       _updateNavigationCamera();
+      _computeRouteSplit(LatLng(_currentPosition!.latitude, _currentPosition!.longitude));
     }
   }
 
@@ -523,16 +583,20 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _currentInstruction = "";
       _nextInstruction = "";
 
-      // Reset polyline color
-      _polylines = {
-        Polyline(
-          polylineId: const PolylineId('route'),
-          points: _routePoints,
-          color: Colors.blue,
-          width: 5,
-        ),
-      };
+      // Reset to single overview polyline
+      if (_routePoints.isNotEmpty) {
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId('route'),
+            points: _routePoints,
+            color: Colors.blue,
+            width: 5,
+          )
+        };
+      }
     });
+
+    _routeUpdateTimer?.cancel();
 
     // Return to overview
     if (_routePoints.isNotEmpty) {
@@ -795,14 +859,14 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                     ),
                     polylines: _polylines,
                     markers: _markers,
-                    myLocationEnabled: false,
-                    myLocationButtonEnabled: false,
+                    myLocationEnabled: true, // Blue dot enabled
+                    myLocationButtonEnabled: true,
                     trafficEnabled: true,
-                    compassEnabled: _isNavigating,
-                    rotateGesturesEnabled: !_isNavigating,
-                    scrollGesturesEnabled: !_isNavigating,
+                    compassEnabled: true,
+                    rotateGesturesEnabled: true,
+                    scrollGesturesEnabled: true,
                     zoomGesturesEnabled: true,
-                    tiltGesturesEnabled: _isNavigating,
+                    tiltGesturesEnabled: true,
                   ),
                 ),
               ),
