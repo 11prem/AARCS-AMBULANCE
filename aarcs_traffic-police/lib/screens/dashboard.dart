@@ -1,6 +1,6 @@
-
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'emergency_response_screen.dart'; // ✅ ADD THIS IMPORT
 
 class AARCSTrafficPoliceDashboard extends StatefulWidget {
   @override
@@ -13,31 +13,28 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
   bool isOnDuty = true;
   bool isConnected = true;
   int selectedTabIndex = 0;
-  
+
   // Emergency request state
   bool hasEmergencyAlert = false;
   bool hasActiveEmergencyRequest = false;
   Map<String, dynamic>? currentEmergencyRequest;
 
-  // Mock ambulance data
+  // Mock ambulance data with COORDINATES
   final List<Map<String, dynamic>> mockAmbulanceRequests = [
     {
       'ambulanceId': 'AMB-2024-001',
-      'currentLocation': 'MG Road Junction',
-      'destination': 'Apollo Hospital',
-      'eta': '4 mins',
-    },
-    {
-      'ambulanceId': 'AMB-2024-002', 
-      'currentLocation': 'Brigade Road',
-      'destination': 'Manipal Hospital',
-      'eta': '6 mins',
-    },
-    {
-      'ambulanceId': 'AMB-2024-003',
-      'currentLocation': 'Commercial Street',
-      'destination': 'Fortis Hospital', 
-      'eta': '3 mins',
+      'currentLocation': '21st cross street, Padmavathy Nagar Main Rd, Padmavathy Nagar, Madambakkam, Chennai, Tamil Nadu 600126',
+      'destination': 'Bharath Hospital',
+      'eta': '5 mins',
+      // ✅ ADD COORDINATE DATA FOR NAVIGATION
+      'sourceCoords': {
+        'lat': 12.8502, // Madambakkam coordinates
+        'lng': 80.0982,
+      },
+      'destCoords': {
+        'lat': 12.9716, // Chennai General Hospital coordinates  
+        'lng': 80.2397,
+      },
     },
   ];
 
@@ -176,7 +173,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           const SizedBox(width: 8),
           const Expanded(
             child: Text(
-              'EMERGENCY ALERT\\nNew ambulance clearance request in your zone',
+              'EMERGENCY ALERT\nNew ambulance clearance request in your zone',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 14,
@@ -207,9 +204,9 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         children: [
           _buildBadgeCard(),
           const SizedBox(height: 20),
-          hasActiveEmergencyRequest 
-            ? _buildEmergencyRequestCard() 
-            : _buildActiveRequestsCard(),
+          hasActiveEmergencyRequest
+              ? _buildEmergencyRequestCard()
+              : _buildActiveRequestsCard(),
           const SizedBox(height: 20),
           _buildStatsCards(),
         ],
@@ -382,18 +379,18 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                   ),
                 ),
                 const SizedBox(height: 16),
-                _buildDetailRow('Current\\nLocation:', currentEmergencyRequest!['currentLocation']),
+                _buildDetailRow('Current\nLocation:', currentEmergencyRequest!['currentLocation']),
                 const SizedBox(height: 12),
                 _buildDetailRow('Destination:', currentEmergencyRequest!['destination']),
                 const SizedBox(height: 12),
                 _buildDetailRow('ETA:', currentEmergencyRequest!['eta']),
                 const SizedBox(height: 20),
-                // Clear Route Button
+                // ✅ UPDATED CLEAR ROUTE BUTTON WITH NAVIGATION
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () {
-                      _clearRoute();
+                      _navigateToEmergencyResponse();
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red,
@@ -659,13 +656,13 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     // Simulate receiving an ambulance clearance request
     final random = Random();
     final randomRequest = mockAmbulanceRequests[random.nextInt(mockAmbulanceRequests.length)];
-    
+
     setState(() {
       hasEmergencyAlert = true;
       hasActiveEmergencyRequest = true;
       currentEmergencyRequest = randomRequest;
     });
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Emergency request received!'),
@@ -675,26 +672,30 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     );
   }
 
+  // ✅ NEW METHOD - NAVIGATION TO EMERGENCY RESPONSE SCREEN
+  void _navigateToEmergencyResponse() {
+    if (currentEmergencyRequest != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => EmergencyResponseScreen(
+            emergencyRequest: currentEmergencyRequest!,
+          ),
+        ),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Navigating to emergency response screen...'),
+          backgroundColor: Color(0xFF4CAF50),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  // ✅ KEPT FOR BACKWARD COMPATIBILITY
   void _clearRoute() {
-    // For now, just show a snackbar - future features will be added here
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Route clearance initiated'),
-        backgroundColor: Color(0xFF4CAF50),
-        duration: Duration(seconds: 2),
-      ),
-    );
-    
-    // Optional: Clear the emergency request after some time
-    // You can uncomment this if you want the request to auto-clear
-    /*
-    Future.delayed(Duration(seconds: 3), () {
-      setState(() {
-        hasActiveEmergencyRequest = false;
-        hasEmergencyAlert = false;
-        currentEmergencyRequest = null;
-      });
-    });
-    */
+    _navigateToEmergencyResponse();
   }
 }
