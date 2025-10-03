@@ -1,5 +1,5 @@
 // lib/screens/dashboard.dart
-
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -33,7 +33,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<dynamic> _searchSuggestions = [];
 
   // Put your real API key here (or load from env)
-  static const String _googleApiKey = '***REMOVED***';
+  final String _googleApiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
 
   // Enhanced filtering keywords for emergency and general hospitals only
   final List<String> _allowedNameKeywords = [
