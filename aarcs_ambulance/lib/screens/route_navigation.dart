@@ -1,5 +1,5 @@
 // lib/screens/route_navigation.dart
-
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -93,7 +93,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   int _currentRoutePointIndex = 0;
   Timer? _routeUpdateTimer;
 
-  final String _apiKey = '***REMOVED***';
+  final String _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
   StreamSubscription<Position>? _positionSubscription;
 
   @override
