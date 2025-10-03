@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "270991552427",
+    "project_id": "aarcs-2f28b",
+    "storage_bucket": "aarcs-2f28b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:270991552427:android:593c8a4886d70847072cee",
+        "android_client_info": {
+          "package_name": "com.example.aacrs_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCLtvfDGKJhlFlq3SiEBCl6xN4dYA88k-A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
