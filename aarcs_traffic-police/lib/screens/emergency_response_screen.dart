@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
@@ -31,7 +31,7 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
       '${(_seconds ~/ 60).toString().padLeft(2, '0')}:${(_seconds % 60).toString().padLeft(2, '0')}';
 
   // Google Maps data
-  static const String _googleApiKey = '***REMOVED***';
+  final String _googleApiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
   final PolylinePoints _polylinePoints = PolylinePoints();
   final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
