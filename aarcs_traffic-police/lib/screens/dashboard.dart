@@ -1,7 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:math';
+import 'dart:async';
 import 'emergency_response_screen.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_core/firebase_core.dart';
+
+// Firebase Police Service for real-time data
+class FirebasePoliceService {
+  // ✅ UPDATED: Specify the correct database URL for Asia region
+  static final DatabaseReference _database = FirebaseDatabase.instanceFor(
+    app: Firebase.app(),
+    databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+  ).ref();
+
+  static Stream<DatabaseEvent> listenToEmergencyRequests() {
+    return _database
+        .child('emergency_requests')
+        .orderByChild('status')
+        .equalTo('pending')
+        .onValue;
+  }
+
+  static Future<void> acceptRequest(String requestId) async {
+    await _database.child('emergency_requests').child(requestId).update({
+      'status': 'accepted',
+      'accepted_at': ServerValue.timestamp,
+    });
+  }
+}
+
 
 class AARCSTrafficPoliceDashboard extends StatefulWidget {
   @override
@@ -19,25 +47,14 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
   bool hasEmergencyAlert = false;
   bool hasActiveEmergencyRequest = false;
   Map<String, dynamic>? currentEmergencyRequest;
+  String? currentRequestId;
 
-  // Mock ambulance data with COORDINATES
-  final List<Map<String, dynamic>> mockAmbulanceRequests = [
-    {
-      'ambulanceId': 'AMB-2024-001',
-      'currentLocation': '21st cross street, Padmavathy Nagar Main Rd, Padmavathy Nagar, Madambakkam, Chennai, Tamil Nadu 600126',
-      'destination': 'Bharath Hospital',
-      'eta': '5 mins',
-      // ✅ ADD COORDINATE DATA FOR NAVIGATION
-      'sourceCoords': {
-        'lat': 12.8502, // Madambakkam coordinates
-        'lng': 80.0982,
-      },
-      'destCoords': {
-        'lat': 12.9716, // Chennai General Hospital coordinates  
-        'lng': 80.2397,
-      },
-    },
-  ];
+  // Firebase subscription
+  StreamSubscription<DatabaseEvent>? _requestSubscription;
+
+  // Statistics
+  int todaysClearances = 12;
+  String avgResponseTime = '2.3 min';
 
   @override
   void initState() {
@@ -48,13 +65,78 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         selectedTabIndex = _tabController.index;
       });
     });
+
+    // Start listening for Firebase emergency requests
+    _listenToEmergencyRequests();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _requestSubscription?.cancel();
     super.dispose();
   }
+
+  void _listenToEmergencyRequests() {
+    print('🚓 Traffic Police: Starting to listen for emergency requests...'); // DEBUG
+
+    _requestSubscription = FirebasePoliceService.listenToEmergencyRequests()
+        .listen((DatabaseEvent event) {
+      print('🚓 Traffic Police: Firebase event received!'); // DEBUG
+      print('🚓 Data exists: ${event.snapshot.exists}'); // DEBUG
+
+      if (event.snapshot.exists && mounted) {
+        print('🚓 Raw data: ${event.snapshot.value}'); // DEBUG
+
+        final requests = Map<String, dynamic>.from(event.snapshot.value as Map);
+        print('🚓 Number of requests: ${requests.length}'); // DEBUG
+
+        if (requests.isNotEmpty) {
+          // Get the latest request
+          final requestEntry = requests.entries.last;
+          final requestId = requestEntry.key;
+          final requestData = Map<String, dynamic>.from(requestEntry.value);
+
+          print('🚓 Processing request: $requestId'); // DEBUG
+          print('🚓 Ambulance ID: ${requestData['ambulanceId']}'); // DEBUG
+
+          setState(() {
+            hasEmergencyAlert = true;
+            hasActiveEmergencyRequest = true;
+            currentRequestId = requestId;
+            currentEmergencyRequest = {
+              'ambulanceId': requestData['ambulanceId'],
+              'currentLocation': requestData['currentLocation'],
+              'destination': requestData['destination'],
+              'eta': requestData['eta'],
+              'distance': requestData['distance'] ?? 'N/A',
+              'sourceCoords': requestData['sourceCoords'],
+              'destCoords': requestData['destCoords'],
+            };
+          });
+
+          print('🚓 State updated with emergency request'); // DEBUG
+
+          // Show notification
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.warning, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text('🚨 Emergency request from ${requestData['ambulanceId']}'),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    });
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -77,13 +159,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
             ),
           ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          _simulateEmergencyRequest();
-        },
-        backgroundColor: const Color(0xFF1976D2),
-        child: const Icon(Icons.refresh, color: Colors.white),
       ),
     );
   }
@@ -131,12 +206,12 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           ),
         ],
       ),
-      actions: const [
+      actions: [
         Padding(
-          padding: EdgeInsets.only(right: 16, top: 8),
+          padding: const EdgeInsets.only(right: 16, top: 8),
           child: Text(
-            '14:39',
-            style: TextStyle(
+            '${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+            style: const TextStyle(
               color: Colors.white70,
               fontSize: 14,
             ),
@@ -386,7 +461,9 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                 const SizedBox(height: 12),
                 _buildDetailRow('ETA:', currentEmergencyRequest!['eta']),
                 const SizedBox(height: 20),
-                // ✅ UPDATED CLEAR ROUTE BUTTON WITH NAVIGATION
+                _buildDetailRow('Distance:', currentEmergencyRequest!['distance']),
+                const SizedBox(height: 20),
+                // Clear Route Button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -495,7 +572,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           ),
           const SizedBox(height: 12),
           Text(
-            'Last updated: 14:39',
+            'Last updated: ${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
             style: TextStyle(
               fontSize: 12,
               color: Colors.grey[500],
@@ -512,7 +589,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         Expanded(
           child: _buildStatCard(
             icon: Icons.check_circle_outline,
-            value: '12',
+            value: todaysClearances.toString(),
             label: "Today's Clearances",
             color: const Color(0xFF4CAF50),
           ),
@@ -521,7 +598,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         Expanded(
           child: _buildStatCard(
             icon: Icons.timer_outlined,
-            value: '2.3 min',
+            value: avgResponseTime,
             label: 'Avg Response',
             color: const Color(0xFFFF9800),
           ),
@@ -634,15 +711,16 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           ),
           SizedBox(height: 16),
           Text(
-            'Profile',
+            'Inspector Raggul J',
             style: TextStyle(
               fontSize: 18,
-              color: Colors.grey,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
             ),
           ),
           SizedBox(height: 8),
           Text(
-            'Manage your profile settings',
+            'Badge: TP-2024-156',
             style: TextStyle(
               fontSize: 14,
               color: Colors.grey,
@@ -653,50 +731,44 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     );
   }
 
-  void _simulateEmergencyRequest() {
-    // Simulate receiving an ambulance clearance request
-    final random = Random();
-    final randomRequest = mockAmbulanceRequests[random.nextInt(mockAmbulanceRequests.length)];
+  void _navigateToEmergencyResponse() async {
+    if (currentEmergencyRequest != null && currentRequestId != null) {
+      try {
+        // Accept the request
+        await FirebasePoliceService.acceptRequest(currentRequestId!);
 
-    setState(() {
-      hasEmergencyAlert = true;
-      hasActiveEmergencyRequest = true;
-      currentEmergencyRequest = randomRequest;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Emergency request received!'),
-        backgroundColor: Colors.red,
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
-  // ✅ NEW METHOD - NAVIGATION TO EMERGENCY RESPONSE SCREEN
-  void _navigateToEmergencyResponse() {
-    if (currentEmergencyRequest != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => EmergencyResponseScreen(
-            emergencyRequest: currentEmergencyRequest!,
+        // Navigate to emergency response screen
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => EmergencyResponseScreen(
+              emergencyRequest: currentEmergencyRequest!,
+            ),
           ),
-        ),
-      );
+        );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Navigating to emergency response screen...'),
-          backgroundColor: Color(0xFF4CAF50),
-          duration: Duration(seconds: 2),
-        ),
-      );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Route clearance accepted'),
+            backgroundColor: Color(0xFF4CAF50),
+            duration: Duration(seconds: 2),
+          ),
+        );
+
+        // Update statistics
+        setState(() {
+          todaysClearances++;
+          hasActiveEmergencyRequest = false;
+          hasEmergencyAlert = false;
+        });
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to process request: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
-  }
-
-  // ✅ KEPT FOR BACKWARD COMPATIBILITY
-  void _clearRoute() {
-    _navigateToEmergencyResponse();
   }
 }
