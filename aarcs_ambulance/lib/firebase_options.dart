@@ -53,10 +53,12 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCLtvfDGKJhlFlq3SiEBCl6xN4dYA88k-A',
-    appId: '1:270991552427:android:593c8a4886d70847072cee',
-    messagingSenderId: '270991552427',
-    projectId: 'aarcs-2f28b',
-    storageBucket: 'aarcs-2f28b.firebasestorage.app',
+    apiKey: 'AIzaSyDAjgib2L5ulYnWKLeB-BSiF52HpRCfsz4',
+    appId: '1:1083061025509:android:d5f60aa78a552cf67b720c',
+    messagingSenderId: '1083061025509',
+    projectId: 'aarcs-emergency-system',
+    databaseURL: 'https://aarcs-emergency-system-default-rtdb.asia-southeast1.firebasedatabase.app',
+    storageBucket: 'aarcs-emergency-system.firebasestorage.app',
   );
+
 }

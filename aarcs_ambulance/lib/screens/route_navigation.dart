@@ -1,4 +1,5 @@
 // lib/screens/route_navigation.dart
+
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -6,7 +7,55 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:http/http.dart' as http;
+
+// Firebase Service for Ambulance
+class FirebaseAmbulanceService {
+  static final DatabaseReference _database = FirebaseDatabase.instanceFor(
+    app: Firebase.app(),
+    databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+  ).ref();
+
+  static Future<void> sendRouteRequest({
+    required String ambulanceId,
+    required String destinationName,
+    required double currentLat,
+    required double currentLng,
+    required double destLat,
+    required double destLng,
+    String? eta,
+    String? distance,
+  }) async {
+    try {
+      final requestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+      await _database.child('emergency_requests').child(requestId).set({
+        'ambulanceId': ambulanceId,
+        'destination': destinationName,
+        'currentLocation': 'Lat: ${currentLat.toStringAsFixed(4)}, Lng: ${currentLng.toStringAsFixed(4)}',
+        'eta': eta ?? 'Calculating...',
+        'distance': distance ?? 'N/A',
+        'sourceCoords': {
+          'lat': currentLat,
+          'lng': currentLng,
+        },
+        'destCoords': {
+          'lat': destLat,
+          'lng': destLng,
+        },
+        'status': 'pending',
+        'timestamp': ServerValue.timestamp,
+      });
+
+      print('✅ Route request sent to Firebase: $requestId');
+    } catch (e) {
+      print('❌ Failed to send route request: $e');
+      rethrow;
+    }
+  }
+}
 
 // Helper class for route progress calculation
 class RouteProgressHelper {
@@ -24,13 +73,11 @@ class RouteProgressHelper {
             math.sin(deltaLngRad / 2) *
             math.sin(deltaLngRad / 2);
     double c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-
     return _earthRadius * c;
   }
 
   static int findNearestPointOnRoute(LatLng currentPosition, List<LatLng> routePoints) {
     if (routePoints.isEmpty) return 0;
-
     double minDistance = double.infinity;
     int nearestIndex = 0;
 
@@ -41,7 +88,6 @@ class RouteProgressHelper {
         nearestIndex = i;
       }
     }
-
     return nearestIndex;
   }
 }
@@ -112,20 +158,29 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
   Future<void> _initializeNavigation() async {
     try {
+      print('🔄 Starting initialization...');
       setState(() {
         _isLoading = true;
         _errorMessage = null;
       });
 
+      print('📍 Checking location permissions...');
       await _checkLocationPermissions();
+
+      print('📍 Getting current position...');
       await _getCurrentPosition();
+
       if (_currentPosition != null) {
+        print('✅ Current position: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
+        print('🗺️ Getting directions...');
         await _getDirections();
+        print('✅ Directions loaded, starting location tracking...');
         _startLocationTracking();
       } else {
         throw Exception('Unable to get current location');
       }
     } catch (e) {
+      print('❌ Initialization error: $e');
       setState(() {
         _errorMessage = 'Initialization failed: ${e.toString()}';
         _isLoading = false;
@@ -155,17 +210,21 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
   Future<void> _getCurrentPosition() async {
     try {
+      print('📍 Attempting to get current position...');
       _currentPosition = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
         timeLimit: const Duration(seconds: 10),
       );
+      print('✅ Position obtained: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
       setState(() {
         _isLocationActive = true;
       });
     } catch (e) {
+      print('⚠️ Failed to get current position, trying last known...');
       try {
         _currentPosition = await Geolocator.getLastKnownPosition();
         if (_currentPosition != null) {
+          print('✅ Last known position: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
           setState(() {
             _isLocationActive = true;
           });
@@ -173,6 +232,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
           throw Exception('No location data available');
         }
       } catch (fallbackError) {
+        print('❌ All location attempts failed: $e');
         throw Exception('Failed to get location: $e');
       }
     }
@@ -181,7 +241,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   void _startLocationTracking() {
     const locationSettings = LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 5, // Update every 5 meters for smooth progress
+      distanceFilter: 5,
     );
 
     _positionSubscription = Geolocator.getPositionStream(
@@ -198,7 +258,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
   void _updateLocation(Position newPosition) {
     if (_currentPosition != null) {
-      // Calculate speed
       final double distanceInMeters = Geolocator.distanceBetween(
         _currentPosition!.latitude,
         _currentPosition!.longitude,
@@ -214,7 +273,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         final double speedMps = distanceInMeters / (deltaTime / 1000);
         final double speedKmh = speedMps * 3.6;
 
-        // Calculate bearing for navigation
         _currentBearing = Geolocator.bearingBetween(
           _currentPosition!.latitude,
           _currentPosition!.longitude,
@@ -232,122 +290,83 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _currentPosition = newPosition;
     });
 
-    // Update navigation if active
     if (_isNavigating) {
-      _updateNavigationProgress(newPosition);
-      _updateRouteProgress(newPosition);
+      _updateRouteProgress();
       _updateNavigationCamera();
     }
   }
 
-  void _updateRouteProgress(Position position) {
-    if (_routePoints.isEmpty) return;
+  void _updateRouteProgress() {
+    if (_routePoints.isEmpty || _currentPosition == null) return;
 
-    // Throttle updates to prevent excessive rebuilds
-    _routeUpdateTimer?.cancel();
-    _routeUpdateTimer = Timer(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        _computeRouteSplit(LatLng(position.latitude, position.longitude));
-      }
-    });
+    LatLng currentLatLng = LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
+    int nearestIndex = RouteProgressHelper.findNearestPointOnRoute(currentLatLng, _routePoints);
+
+    if (nearestIndex > _currentRoutePointIndex) {
+      setState(() {
+        _currentRoutePointIndex = nearestIndex;
+      });
+      _updatePolylines();
+      _updateNavigationInstructions();
+    }
   }
 
-  void _computeRouteSplit(LatLng currentPos) {
+  // ✅ UPDATED: Changed to solid lines (removed patterns)
+  void _updatePolylines() {
     if (_routePoints.isEmpty) return;
 
-    int nearestPointIndex = RouteProgressHelper.findNearestPointOnRoute(currentPos, _routePoints);
+    List<LatLng> completedRoute = _routePoints.sublist(0, _currentRoutePointIndex + 1);
+    List<LatLng> remainingRoute = _routePoints.sublist(_currentRoutePointIndex);
 
-    // Create completed polyline (grey)
-    List<LatLng> completedPoints = _routePoints.take(nearestPointIndex + 1).toList();
-
-    // Create remaining polyline (blue/red)
-    List<LatLng> remainingPoints = _routePoints.skip(nearestPointIndex).toList();
-
-    Set<Polyline> newPolylines = {};
-
-    // Add completed route (grey) if there are completed points
-    if (completedPoints.length > 1) {
-      newPolylines.add(
+    setState(() {
+      _polylines = {
         Polyline(
           polylineId: const PolylineId('completed_route'),
-          points: completedPoints,
-          color: Colors.grey.withOpacity(0.8),
+          points: completedRoute,
+          color: Colors.grey,
           width: 6,
-          zIndex: 1,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
         ),
-      );
-    }
-
-    // Add remaining route (colored) if there are remaining points
-    if (remainingPoints.length > 1) {
-      newPolylines.add(
         Polyline(
           polylineId: const PolylineId('remaining_route'),
-          points: remainingPoints,
+          points: remainingRoute,
           color: Colors.blue,
           width: 6,
-          zIndex: 2,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+          // ✅ REMOVED: patterns parameter for solid line
         ),
+      };
+    });
+  }
+
+  void _updateNavigationInstructions() {
+    if (_routeSteps.isEmpty) return;
+
+    for (int i = 0; i < _routeSteps.length; i++) {
+      var step = _routeSteps[i];
+      LatLng stepLocation = LatLng(
+        step['start_location']['lat'],
+        step['start_location']['lng'],
       );
+
+      double distanceToStep = RouteProgressHelper.distanceHaversine(
+        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+        stepLocation,
+      );
+
+      if (distanceToStep < 50 && i != _currentStepIndex) {
+        setState(() {
+          _currentStepIndex = i;
+          _currentInstruction = _cleanHtmlTags(step['html_instructions']);
+          if (i + 1 < _routeSteps.length) {
+            _nextInstruction = _cleanHtmlTags(_routeSteps[i + 1]['html_instructions']);
+          }
+        });
+        break;
+      }
     }
-
-    setState(() {
-      _polylines = newPolylines;
-    });
-  }
-
-  void _updateNavigationProgress(Position position) {
-    if (_routeSteps.isEmpty || _currentStepIndex >= _routeSteps.length) return;
-
-    final currentStep = _routeSteps[_currentStepIndex];
-    final stepEndLat = (currentStep['end_location']['lat'] as num).toDouble();
-    final stepEndLng = (currentStep['end_location']['lng'] as num).toDouble();
-
-    final distanceToStepEnd = Geolocator.distanceBetween(
-      position.latitude,
-      position.longitude,
-      stepEndLat,
-      stepEndLng,
-    );
-
-    setState(() {
-      _distanceToNextTurn = distanceToStepEnd;
-    });
-
-    // Check if we've reached the current step
-    if (distanceToStepEnd < 50.0) { // 50 meters threshold
-      _moveToNextStep();
-    }
-  }
-
-  void _moveToNextStep() {
-    if (_currentStepIndex < _routeSteps.length - 1) {
-      setState(() {
-        _currentStepIndex++;
-        _currentInstruction = _cleanHtmlInstructions(_routeSteps[_currentStepIndex]['html_instructions']);
-
-        if (_currentStepIndex + 1 < _routeSteps.length) {
-          _nextInstruction = _cleanHtmlInstructions(_routeSteps[_currentStepIndex + 1]['html_instructions']);
-        } else {
-          _nextInstruction = "You will arrive at your destination";
-        }
-      });
-    } else {
-      // Reached destination
-      setState(() {
-        _isNavigating = false;
-        _currentInstruction = "You have arrived at your destination!";
-        _nextInstruction = "";
-      });
-    }
-  }
-
-  String _cleanHtmlInstructions(String htmlText) {
-    return htmlText
-        .replaceAll(RegExp(r'<[^>]*>'), '')
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('&amp;', '&')
-        .trim();
   }
 
   void _updateNavigationCamera() {
@@ -371,10 +390,11 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
 
     try {
+      print('🗺️ Getting directions from (${_currentPosition!.latitude}, ${_currentPosition!.longitude}) to (${widget.destinationLat}, ${widget.destinationLng})');
+
       double destLat;
       double destLng;
 
-      // Get destination coordinates
       if (widget.destinationLat != null && widget.destinationLng != null) {
         destLat = widget.destinationLat!;
         destLng = widget.destinationLng!;
@@ -384,7 +404,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         destLng = coordinates['lng']!;
       }
 
-      // Get directions
       final directions = await _fetchDirections(
         _currentPosition!.latitude,
         _currentPosition!.longitude,
@@ -394,318 +413,263 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
       _processDirectionsResponse(directions, destLat, destLng);
 
+      print('✅ Directions received successfully');
+      setState(() {
+        _isLoading = false;
+      });
+
     } catch (e) {
       debugPrint('getDirections error: $e');
+      setState(() {
+        _isLoading = false;
+      });
       throw Exception('Failed to get directions: ${e.toString()}');
     }
   }
 
   Future<Map<String, double>> _geocodeAddress(String address) async {
     final url = Uri.parse(
-      'https://maps.googleapis.com/maps/api/geocode/json'
-          '?address=${Uri.encodeComponent(address)}'
-          '&key=$_apiKey',
+        'https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(address)}&key=$_apiKey'
     );
 
     final response = await http.get(url);
-    if (response.statusCode != 200) {
-      throw Exception('Geocoding request failed');
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['status'] == 'OK' && data['results'].isNotEmpty) {
+        final location = data['results'][0]['geometry']['location'];
+        return {
+          'lat': location['lat'],
+          'lng': location['lng'],
+        };
+      }
     }
-
-    final data = json.decode(response.body);
-    if (data['status'] != 'OK' || (data['results'] as List).isEmpty) {
-      throw Exception('Address not found');
-    }
-
-    final location = data['results'][0]['geometry']['location'];
-    return {
-      'lat': (location['lat'] as num).toDouble(),
-      'lng': (location['lng'] as num).toDouble(),
-    };
+    throw Exception('Failed to geocode address');
   }
 
   Future<Map<String, dynamic>> _fetchDirections(
-      double originLat, double originLng, double destLat, double destLng) async {
+      double startLat,
+      double startLng,
+      double destLat,
+      double destLng,
+      ) async {
     final url = Uri.parse(
-      'https://maps.googleapis.com/maps/api/directions/json'
-          '?origin=$originLat,$originLng'
-          '&destination=$destLat,$destLng'
-          '&key=$_apiKey'
-          '&mode=driving'
-          '&units=metric',
+        'https://maps.googleapis.com/maps/api/directions/json?'
+            'origin=$startLat,$startLng&'
+            'destination=$destLat,$destLng&'
+            'key=$_apiKey&'
+            'mode=driving&'
+            'alternatives=false'
     );
 
     final response = await http.get(url);
-    if (response.statusCode != 200) {
-      throw Exception('Directions request failed');
-    }
 
-    final data = json.decode(response.body);
-    if (data['status'] != 'OK' || (data['routes'] as List).isEmpty) {
-      throw Exception('No routes found: ${data['status']}');
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['status'] == 'OK' && data['routes'].isNotEmpty) {
+        return data;
+      } else {
+        throw Exception('No routes found: ${data['status']}');
+      }
+    } else {
+      throw Exception('Directions API error: ${response.statusCode}');
     }
-
-    return data;
   }
 
-  void _processDirectionsResponse(Map<String, dynamic> data, double destLat, double destLng) {
-    final route = data['routes'][0];
+  void _processDirectionsResponse(Map<String, dynamic> directions, double destLat, double destLng) {
+    if (directions['routes'] == null || directions['routes'].isEmpty) {
+      throw Exception('No routes found');
+    }
+
+    final route = directions['routes'][0];
     final leg = route['legs'][0];
 
-    // Extract route information
-    final distanceText = leg['distance']['text'];
-    final durationText = leg['duration']['text'];
-
-    // Extract steps for navigation
-    _routeSteps = List<Map<String, dynamic>>.from(leg['steps']);
-
-    // Decode polyline
-    final polylinePoints = _decodePolyline(route['overview_polyline']['points']);
-    _routePoints = polylinePoints;
-
-    // Create initial single polyline for overview (before navigation starts)
-    final polyline = Polyline(
-      polylineId: const PolylineId('route'),
-      points: polylinePoints,
-      color: Colors.blue,
-      width: 5,
-    );
-
-    // Create only destination marker (no start marker - use blue dot instead)
-    final endMarker = Marker(
-      markerId: const MarkerId('end'),
-      position: LatLng(destLat, destLng),
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-      infoWindow: InfoWindow(title: widget.destination),
-    );
-
     setState(() {
-      _polylines = {polyline};
-      _markers = {endMarker}; // Only destination marker
-      _distance = distanceText;
-      _eta = durationText;
-      _isLoading = false;
-
-      // Set initial navigation instruction
-      if (_routeSteps.isNotEmpty) {
-        _currentInstruction = _cleanHtmlInstructions(_routeSteps[0]['html_instructions']);
-        if (_routeSteps.length > 1) {
-          _nextInstruction = _cleanHtmlInstructions(_routeSteps[1]['html_instructions']);
-        }
-      }
+      _eta = leg['duration']['text'];
+      _distance = leg['distance']['text'];
+      _routeSteps = List<Map<String, dynamic>>.from(leg['steps']);
     });
 
-    // Fit camera to show entire route
-    if (polylinePoints.isNotEmpty && _mapController != null) {
-      _fitCameraToRoute(polylinePoints);
+    final points = route['overview_polyline']['points'];
+    final decodedPoints = _decodePolyline(points);
+
+    setState(() {
+      _routePoints = decodedPoints;
+      _currentRoutePointIndex = 0;
+    });
+
+    _updatePolylines();
+    _addMarkersToMap(destLat, destLng);
+
+    if (_routeSteps.isNotEmpty) {
+      setState(() {
+        _currentInstruction = _cleanHtmlTags(_routeSteps[0]['html_instructions']);
+        if (_routeSteps.length > 1) {
+          _nextInstruction = _cleanHtmlTags(_routeSteps[1]['html_instructions']);
+        }
+      });
     }
   }
 
-  List<LatLng> _decodePolyline(String polyline) {
+  List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> points = [];
-    int index = 0;
-    int len = polyline.length;
-    int lat = 0;
-    int lng = 0;
+    int index = 0, len = encoded.length;
+    int lat = 0, lng = 0;
 
     while (index < len) {
-      int shift = 0;
-      int result = 0;
-      int b;
+      int b, shift = 0, result = 0;
       do {
-        b = polyline.codeUnitAt(index++) - 63;
+        b = encoded.codeUnitAt(index++) - 63;
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
-
       int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
       lat += dlat;
 
       shift = 0;
       result = 0;
       do {
-        b = polyline.codeUnitAt(index++) - 63;
+        b = encoded.codeUnitAt(index++) - 63;
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
-
       int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
       lng += dlng;
 
       points.add(LatLng(lat / 1E5, lng / 1E5));
     }
-
     return points;
   }
 
-  void _fitCameraToRoute(List<LatLng> points) {
-    if (points.isEmpty || _mapController == null) return;
+  // ✅ UPDATED: Changed destination marker to cyan (glowing blue like Google Maps)
+  void _addMarkersToMap(double destLat, double destLng) {
+    setState(() {
+      _markers = {
+        Marker(
+          markerId: const MarkerId('current_location'),
+          position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+          infoWindow: InfoWindow(
+            title: 'Ambulance ${widget.ambulanceId}',
+            snippet: 'Current Location',
+          ),
+        ),
+        Marker(
+          markerId: const MarkerId('destination'),
+          position: LatLng(destLat, destLng),
+          // ✅ CHANGED: From hueRed to hueCyan for glowing blue destination marker
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueCyan),
+          infoWindow: InfoWindow(
+            title: widget.destination,
+            snippet: 'Destination',
+          ),
+        ),
+      };
+    });
+  }
 
-    double minLat = points.first.latitude;
-    double maxLat = points.first.latitude;
-    double minLng = points.first.longitude;
-    double maxLng = points.first.longitude;
-
-    for (LatLng point in points) {
-      minLat = math.min(minLat, point.latitude);
-      maxLat = math.max(maxLat, point.latitude);
-      minLng = math.min(minLng, point.longitude);
-      maxLng = math.max(maxLng, point.longitude);
-    }
-
-    final bounds = LatLngBounds(
-      southwest: LatLng(minLat, minLng),
-      northeast: LatLng(maxLat, maxLng),
-    );
-
-    _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+  String _cleanHtmlTags(String htmlString) {
+    RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
+    return htmlString.replaceAll(exp, '');
   }
 
   void _startNavigation() {
-    if (_routeSteps.isEmpty) return;
-
     setState(() {
       _isNavigating = true;
-      _currentStepIndex = 0;
     });
-
-    // Start navigation camera and route progress tracking
-    if (_currentPosition != null) {
-      _updateNavigationCamera();
-      _computeRouteSplit(LatLng(_currentPosition!.latitude, _currentPosition!.longitude));
-    }
+    _updateNavigationCamera();
   }
 
   void _stopNavigation() {
     setState(() {
       _isNavigating = false;
-      _currentStepIndex = 0;
-      _currentInstruction = "";
-      _nextInstruction = "";
-
-      // Reset to single overview polyline
-      if (_routePoints.isNotEmpty) {
-        _polylines = {
-          Polyline(
-            polylineId: const PolylineId('route'),
-            points: _routePoints,
-            color: Colors.blue,
-            width: 5,
-          )
-        };
-      }
     });
-
-    _routeUpdateTimer?.cancel();
-
-    // Return to overview
-    if (_routePoints.isNotEmpty) {
-      _fitCameraToRoute(_routePoints);
-    }
   }
 
-  void _clearTraffic() {
+  Future<void> _clearTraffic() async {
+    if (_currentPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ Current location not available'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _isTrafficClearing = true;
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.local_hospital, color: Colors.white),
-            SizedBox(width: 8),
-            Text("🚨 Emergency traffic clearance requested"),
-          ],
-        ),
-        backgroundColor: Colors.red,
-        duration: Duration(seconds: 3),
-      ),
-    );
+    try {
+      double destLat;
+      double destLng;
 
-    Timer(const Duration(seconds: 3), () {
-      if (mounted) {
-        setState(() {
-          _isTrafficClearing = false;
-        });
+      if (widget.destinationLat != null && widget.destinationLng != null) {
+        destLat = widget.destinationLat!;
+        destLng = widget.destinationLng!;
+      } else {
+        final coordinates = await _geocodeAddress(widget.destination);
+        destLat = coordinates['lat']!;
+        destLng = coordinates['lng']!;
       }
-    });
-  }
 
-  Widget _buildNavigationInstructions() {
-    if (!_isNavigating || _currentInstruction.isEmpty) {
-      return const SizedBox.shrink();
-    }
+      print('🚑 Sending route clearance request to Firebase...');
+      print('   - Ambulance: ${widget.ambulanceId}');
+      print('   - Destination: ${widget.destination}');
+      print('   - Current: (${_currentPosition!.latitude}, ${_currentPosition!.longitude})');
+      print('   - Destination Coords: ($destLat, $destLng)');
+      print('   - ETA: $_eta');
+      print('   - Distance: $_distance');
 
-    return Container(
-      margin: const EdgeInsets.all(12.0),
-      padding: const EdgeInsets.all(16.0),
-      decoration: BoxDecoration(
-        color: Colors.green,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.navigation, color: Colors.white, size: 24),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  _currentInstruction,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              if (_distanceToNextTurn > 0)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${_distanceToNextTurn.round()}m',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          if (_nextInstruction.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Row(
+      await FirebaseAmbulanceService.sendRouteRequest(
+        ambulanceId: widget.ambulanceId,
+        destinationName: widget.destination,
+        currentLat: _currentPosition!.latitude,
+        currentLng: _currentPosition!.longitude,
+        destLat: destLat,
+        destLng: destLng,
+        eta: _eta,
+        distance: _distance,
+      );
+
+      setState(() {
+        _isTrafficClearing = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
               children: [
-                const Icon(Icons.turn_right, color: Colors.white70, size: 20),
-                const SizedBox(width: 12),
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    'Then: $_nextInstruction',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                    ),
-                  ),
+                  child: Text('✅ Traffic clearing request sent to authorities'),
                 ),
               ],
             ),
-          ],
-        ],
-      ),
-    );
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ Error sending traffic clearance: $e');
+
+      setState(() {
+        _isTrafficClearing = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Failed to send request: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -755,266 +719,212 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               icon: const Icon(Icons.stop),
               onPressed: _stopNavigation,
               tooltip: 'Stop Navigation',
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.navigation),
+              onPressed: _startNavigation,
+              tooltip: 'Start Navigation',
             ),
         ],
       ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // ETA and Distance Card
-            Container(
-              margin: const EdgeInsets.all(12.0),
-              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.grey[850] : Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+      body: Stack(
+        children: [
+          // Map
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : (_currentPosition == null)
+              ? const Center(child: Text('Location not available'))
+              : ClipRRect(
+            borderRadius: BorderRadius.circular(0),
+            child: GoogleMap(
+              initialCameraPosition: CameraPosition(
+                target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+                zoom: 15,
               ),
+              onMapCreated: (controller) {
+                _mapController = controller;
+              },
+              polylines: _polylines,
+              markers: _markers,
+              myLocationEnabled: false,
+              myLocationButtonEnabled: false,
+              zoomControlsEnabled: true,
+              compassEnabled: true,
+              trafficEnabled: true,
+              mapType: MapType.normal,
+            ),
+          ),
+
+          // ✅ UPDATED: Fixed info cards - now shows "min" and "KM" only
+          if (!_isLoading && _currentPosition != null)
+            Positioned(
+              top: 16,
+              left: 16,
+              right: 16,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  Column(
-                    children: [
-                      Text(
-                        _eta.split(' ').first,
-                        style: const TextStyle(
-                          fontSize: 36,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Text('MIN', style: TextStyle(color: Colors.grey)),
-                    ],
-                  ),
-                  Container(
-                    height: 50,
-                    width: 1,
-                    color: Colors.grey[300],
-                  ),
-                  Column(
-                    children: [
-                      Text(
-                        _distance.split(' ').first,
-                        style: const TextStyle(
-                          fontSize: 36,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Text('KM', style: TextStyle(color: Colors.grey)),
-                    ],
-                  ),
+                  _buildInfoCard('$_eta', isDark),
+                  _buildInfoCard('$_distance', isDark),
                 ],
               ),
             ),
 
-            // Navigation Instructions
-            _buildNavigationInstructions(),
+          // Navigation instructions card
+          if (_isNavigating && _currentInstruction.isNotEmpty)
+            Positioned(
+              top: 100,
+              left: 16,
+              right: 16,
+              child: Card(
+                color: Colors.green,
+                elevation: 8,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.arrow_upward, color: Colors.white, size: 32),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _currentInstruction,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_nextInstruction.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Then: $_nextInstruction',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
 
-            // Map
-            Expanded(
+          // Speed indicator
+          if (!_isLoading)
+            Positioned(
+              bottom: 150,
+              left: 16,
               child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 12.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
+                  color: isDark ? Colors.grey[850] : Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.1),
-                      blurRadius: 4,
+                      blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-                child: ClipRRect(
+                child: Column(
+                  children: [
+                    Text(
+                      '${_currentSpeed.toStringAsFixed(0)} km/h',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Text(
+                      'Current Speed',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // ✅ REMOVED: Location active indicator (entire Positioned widget removed)
+
+          // Clear traffic button
+          Positioned(
+            bottom: 16,
+            left: 16,
+            right: 16,
+            child: ElevatedButton(
+              onPressed: _isTrafficClearing ? null : _clearTraffic,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
-                  child: _isLoading
-                      ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircularProgressIndicator(color: Colors.red),
-                        SizedBox(height: 16),
-                        Text('Loading route...'),
-                      ],
-                    ),
-                  )
-                      : (_currentPosition == null)
-                      ? const Center(child: Text('Location not available'))
-                      : GoogleMap(
-                    onMapCreated: (GoogleMapController controller) {
-                      _mapController = controller;
-                    },
-                    initialCameraPosition: CameraPosition(
-                      target: LatLng(
-                        _currentPosition!.latitude,
-                        _currentPosition!.longitude,
-                      ),
-                      zoom: _isNavigating ? 18 : 14,
-                      bearing: _isNavigating ? _currentBearing : 0,
-                      tilt: _isNavigating ? 45 : 0,
-                    ),
-                    polylines: _polylines,
-                    markers: _markers,
-                    myLocationEnabled: true, // Blue dot enabled
-                    myLocationButtonEnabled: true,
-                    trafficEnabled: true,
-                    compassEnabled: true,
-                    rotateGesturesEnabled: true,
-                    scrollGesturesEnabled: true,
-                    zoomGesturesEnabled: true,
-                    tiltGesturesEnabled: true,
-                  ),
                 ),
+                elevation: 8,
               ),
-            ),
-
-            // Status and Speed
-            Container(
-              margin: const EdgeInsets.all(12.0),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.grey[850] : Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${_currentSpeed.toInt()} km/h',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Text(
-                        'Current Speed',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: _isLocationActive ? Colors.green : Colors.red,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _isLocationActive ? 'Location Active' : 'Location Inactive',
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                    ],
+              child: _isTrafficClearing
+                  ? const SizedBox(
+                height: 24,
+                width: 24,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              )
+                  : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(Icons.warning, size: 24),
+                  SizedBox(width: 8),
+                  Text(
+                    'CLEAR TRAFFIC',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
 
-            // Navigation Control Buttons
-            if (!_isNavigating) ...[
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 12.0),
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _routeSteps.isNotEmpty ? _startNavigation : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.play_arrow),
-                      SizedBox(width: 8),
-                      Text(
-                        'START NAVIGATION',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-
-            // Clear Traffic Button
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 12.0),
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _isTrafficClearing ? null : _clearTraffic,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                child: _isTrafficClearing
-                    ? const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Text(
-                      'CLEARING TRAFFIC...',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                )
-                    : const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.warning_amber_rounded),
-                    SizedBox(width: 8),
-                    Text(
-                      '🚨 CLEAR TRAFFIC',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+  Widget _buildInfoCard(String text, bool isDark) {
+    return Expanded(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isDark ? Colors.grey[850] : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
-            const SizedBox(height: 12),
           ],
+        ),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
     );

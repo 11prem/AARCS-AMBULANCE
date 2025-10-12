@@ -8,7 +8,6 @@ import 'package:firebase_core/firebase_core.dart';
 
 // Firebase Police Service for real-time data
 class FirebasePoliceService {
-  // ✅ UPDATED: Specify the correct database URL for Asia region
   static final DatabaseReference _database = FirebaseDatabase.instanceFor(
     app: Firebase.app(),
     databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
@@ -17,8 +16,8 @@ class FirebasePoliceService {
   static Stream<DatabaseEvent> listenToEmergencyRequests() {
     return _database
         .child('emergency_requests')
-        .orderByChild('status')
-        .equalTo('pending')
+        .orderByChild('timestamp') // ✅ Order by timestamp instead of status
+        .limitToLast(5) // ✅ Only get the 5 most recent requests
         .onValue;
   }
 
@@ -29,6 +28,7 @@ class FirebasePoliceService {
     });
   }
 }
+
 
 
 class AARCSTrafficPoliceDashboard extends StatefulWidget {
@@ -79,43 +79,78 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
 
   void _listenToEmergencyRequests() {
     print('🚓 Traffic Police: Starting to listen for emergency requests...'); // DEBUG
-
     _requestSubscription = FirebasePoliceService.listenToEmergencyRequests()
         .listen((DatabaseEvent event) {
       print('🚓 Traffic Police: Firebase event received!'); // DEBUG
       print('🚓 Data exists: ${event.snapshot.exists}'); // DEBUG
+      print('🚓 Event type: ${event.type}'); // DEBUG
 
       if (event.snapshot.exists && mounted) {
         print('🚓 Raw data: ${event.snapshot.value}'); // DEBUG
-
-        final requests = Map<String, dynamic>.from(event.snapshot.value as Map);
+        final requests = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
         print('🚓 Number of requests: ${requests.length}'); // DEBUG
 
-        if (requests.isNotEmpty) {
-          // Get the latest request
-          final requestEntry = requests.entries.last;
-          final requestId = requestEntry.key;
-          final requestData = Map<String, dynamic>.from(requestEntry.value);
+        // ✅ FIXED: Filter out non-pending requests
+        final pendingRequests = <String, Map<String, dynamic>>{};
 
-          print('🚓 Processing request: $requestId'); // DEBUG
-          print('🚓 Ambulance ID: ${requestData['ambulanceId']}'); // DEBUG
+        requests.forEach((key, value) {
+          final requestData = Map<String, dynamic>.from(value);
+          final status = requestData['status']?.toString() ?? '';
+
+          print('🚓 Request $key - Status: $status'); // DEBUG
+
+          // Only include truly pending requests
+          if (status == 'pending') {
+            pendingRequests[key.toString()] = requestData;
+          }
+        });
+
+        print('🚓 Filtered pending requests: ${pendingRequests.length}'); // DEBUG
+
+        if (pendingRequests.isNotEmpty) {
+          // Get the LATEST request by timestamp
+          var sortedEntries = pendingRequests.entries.toList()
+            ..sort((a, b) {
+              final timestampA = a.value['timestamp'] ?? 0;
+              final timestampB = b.value['timestamp'] ?? 0;
+              return (timestampB as num).compareTo(timestampA as num);
+            });
+
+          final latestEntry = sortedEntries.first;
+          final requestId = latestEntry.key;
+          final requestData = latestEntry.value;
+
+          // Don't show alert if this request was already processed
+          if (currentRequestId == requestId && hasActiveEmergencyRequest) {
+            print('🚓 Request $requestId already being displayed, skipping...'); // DEBUG
+            return;
+          }
+
+          print('🚓 Processing NEW request: $requestId'); // DEBUG
+          print('🚓 Destination: ${requestData['destination']}'); // DEBUG
 
           setState(() {
             hasEmergencyAlert = true;
             hasActiveEmergencyRequest = true;
             currentRequestId = requestId;
+
+            final sourceCoords = requestData['sourceCoords'] is Map
+                ? Map<String, dynamic>.from(requestData['sourceCoords'])
+                : null;
+            final destCoords = requestData['destCoords'] is Map
+                ? Map<String, dynamic>.from(requestData['destCoords'])
+                : null;
+
             currentEmergencyRequest = {
-              'ambulanceId': requestData['ambulanceId'],
-              'currentLocation': requestData['currentLocation'],
-              'destination': requestData['destination'],
-              'eta': requestData['eta'],
+              'ambulanceId': requestData['ambulanceId'] ?? 'Unknown',
+              'currentLocation': requestData['currentLocation'] ?? 'Unknown',
+              'destination': requestData['destination'] ?? 'Unknown',
+              'eta': requestData['eta'] ?? 'Calculating...',
               'distance': requestData['distance'] ?? 'N/A',
-              'sourceCoords': requestData['sourceCoords'],
-              'destCoords': requestData['destCoords'],
+              'sourceCoords': sourceCoords,
+              'destCoords': destCoords,
             };
           });
-
-          print('🚓 State updated with emergency request'); // DEBUG
 
           // Show notification
           ScaffoldMessenger.of(context).showSnackBar(
@@ -124,7 +159,11 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                 children: [
                   const Icon(Icons.warning, color: Colors.white),
                   const SizedBox(width: 8),
-                  Text('🚨 Emergency request from ${requestData['ambulanceId']}'),
+                  Expanded(
+                    child: Text(
+                        '🚨 Emergency: ${requestData['ambulanceId']} → ${requestData['destination']}'
+                    ),
+                  ),
                 ],
               ),
               backgroundColor: Colors.red,
@@ -132,10 +171,35 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
               behavior: SnackBarBehavior.floating,
             ),
           );
+        } else {
+          // No pending requests, clear the emergency alert
+          print('🚓 No pending requests found, clearing alerts...'); // DEBUG
+          if (hasEmergencyAlert || hasActiveEmergencyRequest) {
+            setState(() {
+              hasEmergencyAlert = false;
+              hasActiveEmergencyRequest = false;
+              currentEmergencyRequest = null;
+              currentRequestId = null;
+            });
+          }
+        }
+      } else {
+        // No data exists, clear any existing alerts
+        print('🚓 No emergency requests data exists'); // DEBUG
+        if (hasEmergencyAlert || hasActiveEmergencyRequest) {
+          setState(() {
+            hasEmergencyAlert = false;
+            hasActiveEmergencyRequest = false;
+            currentEmergencyRequest = null;
+            currentRequestId = null;
+          });
         }
       }
     });
   }
+
+
+
 
 
   @override
@@ -441,6 +505,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
               ],
             ),
           ),
+
           // Request Details
           Padding(
             padding: const EdgeInsets.all(16),
@@ -455,14 +520,20 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                   ),
                 ),
                 const SizedBox(height: 16),
-                _buildDetailRow('Current\nLocation:', currentEmergencyRequest!['currentLocation']),
+
+                _buildDetailRow('Current\\nLocation:', currentEmergencyRequest!['currentLocation']),
                 const SizedBox(height: 12),
-                _buildDetailRow('Destination:', currentEmergencyRequest!['destination']),
+
+                // ✅ FIXED: Display correct destination from Firebase
+                _buildDetailRow('Destination:', currentEmergencyRequest!['destination'] ?? 'Unknown'),
                 const SizedBox(height: 12),
-                _buildDetailRow('ETA:', currentEmergencyRequest!['eta']),
+
+                _buildDetailRow('ETA:', currentEmergencyRequest!['eta'] ?? '--'),
+                const SizedBox(height: 12),
+
+                _buildDetailRow('Distance:', currentEmergencyRequest!['distance'] ?? '--'),
                 const SizedBox(height: 20),
-                _buildDetailRow('Distance:', currentEmergencyRequest!['distance']),
-                const SizedBox(height: 20),
+
                 // Clear Route Button
                 SizedBox(
                   width: double.infinity,
@@ -494,6 +565,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
       ),
     );
   }
+
 
   Widget _buildDetailRow(String label, String value) {
     return Row(

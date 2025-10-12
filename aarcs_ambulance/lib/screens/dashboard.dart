@@ -9,53 +9,9 @@ import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 
-class FirebaseAmbulanceService {
-  // ✅ UPDATED: Specify the correct database URL for Asia region
-  static final DatabaseReference _database = FirebaseDatabase.instanceFor(
-    app: Firebase.app(),
-    databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
-  ).ref();
 
-  static Future<void> sendRouteRequest({
-    required String ambulanceId,
-    required String destinationName,
-    required double currentLat,
-    required double currentLng,
-    required double destLat,
-    required double destLng,
-    String? eta,
-    String? distance,
-  }) async {
-    try {
-      final requestId = DateTime.now().millisecondsSinceEpoch.toString();
-      await _database.child('emergency_requests').child(requestId).set({
-        'ambulanceId': ambulanceId,
-        'currentLocation': 'Lat: ${currentLat.toStringAsFixed(4)}, Lng: ${currentLng.toStringAsFixed(4)}',
-        'destination': destinationName,
-        'eta': eta ?? 'Calculating...',
-        'distance': distance ?? 'Calculating...',
-        'sourceCoords': {
-          'lat': currentLat,
-          'lng': currentLng,
-        },
-        'destCoords': {
-          'lat': destLat,
-          'lng': destLng,
-        },
-        'timestamp': ServerValue.timestamp,
-        'status': 'pending',
-        'request_id': requestId,
-      });
 
-      debugPrint('✅ Route request sent to Firebase');
-    } catch (e) {
-      debugPrint('❌ Firebase error: $e');
-      throw Exception('Failed to send route request: $e');
-    }
-  }
-}
-
-class DashboardScreen extends StatefulWidget {
+  class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
   final VoidCallback onToggleTheme;
 
@@ -463,10 +419,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _openRouteScreenWithHospital(Map<String, dynamic> hospital) async {
-    print('🔥 Hospital card tapped: ${hospital['name']}'); // DEBUG
-
+    print('🔥 Hospital card tapped: ${hospital['name']}');
     if (_currentPosition == null) {
-      print('❌ Current position is null'); // DEBUG
+      print('❌ Current position is null');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Current location not available')),
       );
@@ -474,45 +429,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     try {
-      print('📍 Current: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}'); // DEBUG
-      print('🏥 Destination: ${hospital['lat']}, ${hospital['lng']}'); // DEBUG
+      final String hospitalName = hospital['name']?.toString() ?? 'Unknown Hospital';
+      print('📍 Current: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
+      print('🏥 Destination: $hospitalName');
+      print('🏥 Coordinates: ${hospital['lat']}, ${hospital['lng']}');
 
-      // Send route request to Firebase BEFORE navigating
-      await FirebaseAmbulanceService.sendRouteRequest(
-        ambulanceId: widget.ambulanceId,
-        destinationName: hospital['name'] ?? '',
-        currentLat: _currentPosition!.latitude,
-        currentLng: _currentPosition!.longitude,
-        destLat: hospital['lat'] as double,
-        destLng: hospital['lng'] as double,
-        eta: hospital['duration_text']?.toString(),
-        distance: hospital['distance_text']?.toString(),
-      );
-
-      print('✅ Firebase request sent successfully'); // DEBUG
-
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.check_circle, color: Colors.white),
-              const SizedBox(width: 8),
-              Text('Route request sent for ${hospital['name']}'),
-            ],
-          ),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-
+      // ✅ REMOVED: Firebase call - only navigate
       // Navigate to route screen
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => RouteNavigationScreen(
             ambulanceId: widget.ambulanceId,
-            destination: hospital['name'] ?? '',
+            destination: hospitalName,
             destinationLat: hospital['lat'] as double,
             destinationLng: hospital['lng'] as double,
             onToggleTheme: widget.onToggleTheme,
@@ -520,15 +449,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       );
     } catch (e) {
-      print('❌ Error in _openRouteScreenWithHospital: $e'); // DEBUG
+      print('❌ Error in _openRouteScreenWithHospital: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to send route request: $e'),
+          content: Text('Failed to navigate: $e'),
           backgroundColor: Colors.red,
         ),
       );
     }
   }
+
 
 
 
@@ -551,11 +481,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Handle lat/lng coordinates
     final latLngMatch = RegExp(r'^\s*([-+]?\d+(\.\d+)?),\s*([-+]?\d+(\.\d+)?)\s*$')
         .firstMatch(text);
-
     if (latLngMatch != null) {
       final lat = double.tryParse(latLngMatch.group(1)!);
       final lng = double.tryParse(latLngMatch.group(3)!);
-
       if (lat == null || lng == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Invalid coordinates')),
@@ -563,34 +491,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
-      // ✅ NEW: Send Firebase request for coordinate-based destination
-      try {
-        await FirebaseAmbulanceService.sendRouteRequest(
-          ambulanceId: widget.ambulanceId,
-          destinationName: text,
-          currentLat: _currentPosition!.latitude,
-          currentLng: _currentPosition!.longitude,
-          destLat: lat,
-          destLng: lng,
-        );
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 8),
-                Text('Route request sent for coordinates'),
-              ],
-            ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      } catch (e) {
-        debugPrint('Firebase error: $e');
-      }
-
+      // ✅ REMOVED: Firebase call - just navigate
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -606,67 +507,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return;
     }
 
-    // ✅ NEW: For text destinations, geocode first then send Firebase request
-    try {
-      // Geocode the destination address
-      final geocodeUrl = Uri.parse(
-        'https://maps.googleapis.com/maps/api/geocode/json'
-            '?address=${Uri.encodeComponent(text)}'
-            '&key=$_googleApiKey',
-      );
-
-      final response = await http.get(geocodeUrl);
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 'OK' && (data['results'] as List).isNotEmpty) {
-          final location = data['results'][0]['geometry']['location'];
-          final double destLat = (location['lat'] as num).toDouble();
-          final double destLng = (location['lng'] as num).toDouble();
-
-          // Send Firebase request with geocoded coordinates
-          await FirebaseAmbulanceService.sendRouteRequest(
-            ambulanceId: widget.ambulanceId,
-            destinationName: text,
-            currentLat: _currentPosition!.latitude,
-            currentLng: _currentPosition!.longitude,
-            destLat: destLat,
-            destLng: destLng,
-          );
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.check_circle, color: Colors.white),
-                  const SizedBox(width: 8),
-                  Text('Route request sent for $text'),
-                ],
-              ),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 2),
-            ),
-          );
-
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => RouteNavigationScreen(
-                ambulanceId: widget.ambulanceId,
-                destination: text,
-                destinationLat: destLat,
-                destinationLng: destLng,
-                onToggleTheme: widget.onToggleTheme,
-              ),
-            ),
-          );
-          return;
-        }
-      }
-    } catch (e) {
-      debugPrint('Geocoding failed: $e');
-    }
-
-    // Fallback: Navigate without coordinates (will geocode in route screen)
+    // ✅ REMOVED: Firebase geocoding and sending - just navigate
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -680,6 +521,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
+
 
 
 
@@ -936,36 +778,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             final double lat = (loc['lat'] as num).toDouble();
                             final double lng = (loc['lng'] as num).toDouble();
 
-                            // ✅ NEW: Send Firebase request before navigation
-                            if (_currentPosition != null) {
-                              try {
-                                await FirebaseAmbulanceService.sendRouteRequest(
-                                  ambulanceId: widget.ambulanceId,
-                                  destinationName: description,
-                                  currentLat: _currentPosition!.latitude,
-                                  currentLng: _currentPosition!.longitude,
-                                  destLat: lat,
-                                  destLng: lng,
-                                );
-
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Row(
-                                      children: [
-                                        const Icon(Icons.check_circle, color: Colors.white),
-                                        const SizedBox(width: 8),
-                                        Text('Route request sent for $description'),
-                                      ],
-                                    ),
-                                    backgroundColor: Colors.green,
-                                    duration: const Duration(seconds: 2),
-                                  ),
-                                );
-                              } catch (e) {
-                                debugPrint('Firebase error: $e');
-                              }
-                            }
-
+                            // ✅ REMOVED: Firebase call - just navigate directly
                             Navigator.push(
                               context,
                               MaterialPageRoute(
@@ -980,6 +793,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             );
                           }
                         },
+
 
                       );
                     },
