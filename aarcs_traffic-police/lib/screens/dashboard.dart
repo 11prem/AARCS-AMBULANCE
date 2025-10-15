@@ -715,38 +715,70 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
   void _navigateToEmergencyResponse() async {
     if (currentEmergencyRequest != null && currentRequestId != null) {
       try {
-        // Accept the request
-        await FirebasePoliceService.acceptRequest(currentRequestId!);
+        print('🚓 Navigating to Emergency Response Screen');
+        print('🚓 Request ID: $currentRequestId');
+        print('🚓 Emergency Request data: $currentEmergencyRequest');
 
-        // Navigate to emergency response screen
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) =>
-                EmergencyResponseScreen(
-                  emergencyRequest: currentEmergencyRequest!,
-                ),
-          ),
-        );
+        // IMPORTANT: Store the data locally BEFORE accepting
+        final requestDataCopy = Map<String, dynamic>.from(currentEmergencyRequest!);
+        final requestIdCopy = currentRequestId!;
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Route clearance accepted'),
-            backgroundColor: Color(0xFF4CAF50),
-            duration: Duration(seconds: 2),
-          ),
-        );
-
-        // Clear the emergency request state
+        // Clear the UI immediately to prevent duplicate clicks
         setState(() {
           hasActiveEmergencyRequest = false;
           hasEmergencyAlert = false;
+          currentEmergencyRequest = null;
+          currentRequestId = null;
         });
-      } catch (e) {
+
+        // Accept the request in Firebase (this changes status to 'accepted')
+        await FirebasePoliceService.acceptRequest(requestIdCopy);
+        print('✅ Request accepted in Firebase');
+
+        // Navigate to emergency response screen with the COPIED data
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => EmergencyResponseScreen(
+                emergencyRequest: requestDataCopy,
+              ),
+            ),
+          );
+
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Route clearance accepted'),
+              backgroundColor: Color(0xFF4CAF50),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+
+      } catch (e, stackTrace) {
+        print('❌ Error navigating to emergency response: $e');
+        print('Stack trace: $stackTrace');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to process request: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } else {
+      print('⚠️ No emergency request data available');
+      print('currentEmergencyRequest: $currentEmergencyRequest');
+      print('currentRequestId: $currentRequestId');
+
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to process request: $e'),
-            backgroundColor: Colors.red,
+          const SnackBar(
+            content: Text('No emergency request data available'),
+            backgroundColor: Colors.orange,
           ),
         );
       }
