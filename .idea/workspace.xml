@@ -10,17 +10,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="09ab5d6f-3528-4958-99f3-8e70c7455b13" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/AARCS.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/AARCS.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_SDK.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Dart_SDK.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/android/app/google-services.json" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/android/app/google-services.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/android/app/src/main/AndroidManifest.xml" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/android/app/src/main/AndroidManifest.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/firebase.json" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/firebase.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/lib/firebase_options.dart" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/lib/firebase_options.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/dashboard.dart" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/dashboard.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/route_navigation.dart" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/route_navigation.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/aarcs_ambulance/linux/flutter/generated_plugin_registrant.cc" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/linux/flutter/generated_plugin_registrant.cc" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/aarcs_ambulance/linux/flutter/generated_plugin_registrant.h" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/linux/flutter/generated_plugin_registrant.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/aarcs_ambulance/linux/flutter/generated_plugins.cmake" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/linux/flutter/generated_plugins.cmake" afterDir="false" />
