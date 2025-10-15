@@ -16,8 +16,8 @@ class FirebasePoliceService {
   static Stream<DatabaseEvent> listenToEmergencyRequests() {
     return _database
         .child('emergency_requests')
-        .orderByChild('timestamp') // ✅ Order by timestamp instead of status
-        .limitToLast(5) // ✅ Only get the 5 most recent requests
+        .orderByChild('timestamp')
+        .limitToLast(5)
         .onValue;
   }
 
@@ -28,8 +28,6 @@ class FirebasePoliceService {
     });
   }
 }
-
-
 
 class AARCSTrafficPoliceDashboard extends StatefulWidget {
   @override
@@ -51,10 +49,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
 
   // Firebase subscription
   StreamSubscription<DatabaseEvent>? _requestSubscription;
-
-  // Statistics
-  int todaysClearances = 12;
-  String avgResponseTime = '2.3 min';
 
   @override
   void initState() {
@@ -78,37 +72,35 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
   }
 
   void _listenToEmergencyRequests() {
-    print('🚓 Traffic Police: Starting to listen for emergency requests...'); // DEBUG
+    print('🚓 Traffic Police: Starting to listen for emergency requests...');
     _requestSubscription = FirebasePoliceService.listenToEmergencyRequests()
         .listen((DatabaseEvent event) {
-      print('🚓 Traffic Police: Firebase event received!'); // DEBUG
-      print('🚓 Data exists: ${event.snapshot.exists}'); // DEBUG
-      print('🚓 Event type: ${event.type}'); // DEBUG
+      print('🚓 Traffic Police: Firebase event received!');
+      print('🚓 Data exists: ${event.snapshot.exists}');
+      print('🚓 Event type: ${event.type}');
 
       if (event.snapshot.exists && mounted) {
-        print('🚓 Raw data: ${event.snapshot.value}'); // DEBUG
-        final requests = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
-        print('🚓 Number of requests: ${requests.length}'); // DEBUG
+        print('🚓 Raw data: ${event.snapshot.value}');
+        final requests = Map<dynamic, dynamic>.from(
+            event.snapshot.value as Map);
+        print('🚓 Number of requests: ${requests.length}');
 
-        // ✅ FIXED: Filter out non-pending requests
         final pendingRequests = <String, Map<String, dynamic>>{};
 
         requests.forEach((key, value) {
           final requestData = Map<String, dynamic>.from(value);
           final status = requestData['status']?.toString() ?? '';
 
-          print('🚓 Request $key - Status: $status'); // DEBUG
+          print('🚓 Request $key - Status: $status');
 
-          // Only include truly pending requests
           if (status == 'pending') {
             pendingRequests[key.toString()] = requestData;
           }
         });
 
-        print('🚓 Filtered pending requests: ${pendingRequests.length}'); // DEBUG
+        print('🚓 Filtered pending requests: ${pendingRequests.length}');
 
         if (pendingRequests.isNotEmpty) {
-          // Get the LATEST request by timestamp
           var sortedEntries = pendingRequests.entries.toList()
             ..sort((a, b) {
               final timestampA = a.value['timestamp'] ?? 0;
@@ -120,14 +112,13 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           final requestId = latestEntry.key;
           final requestData = latestEntry.value;
 
-          // Don't show alert if this request was already processed
           if (currentRequestId == requestId && hasActiveEmergencyRequest) {
-            print('🚓 Request $requestId already being displayed, skipping...'); // DEBUG
+            print('🚓 Request $requestId already being displayed, skipping...');
             return;
           }
 
-          print('🚓 Processing NEW request: $requestId'); // DEBUG
-          print('🚓 Destination: ${requestData['destination']}'); // DEBUG
+          print('🚓 Processing NEW request: $requestId');
+          print('🚓 Destination: ${requestData['destination']}');
 
           setState(() {
             hasEmergencyAlert = true;
@@ -152,7 +143,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
             };
           });
 
-          // Show notification
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Row(
@@ -172,8 +162,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
             ),
           );
         } else {
-          // No pending requests, clear the emergency alert
-          print('🚓 No pending requests found, clearing alerts...'); // DEBUG
+          print('🚓 No pending requests found, clearing alerts...');
           if (hasEmergencyAlert || hasActiveEmergencyRequest) {
             setState(() {
               hasEmergencyAlert = false;
@@ -184,8 +173,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           }
         }
       } else {
-        // No data exists, clear any existing alerts
-        print('🚓 No emergency requests data exists'); // DEBUG
+        print('🚓 No emergency requests data exists');
         if (hasEmergencyAlert || hasActiveEmergencyRequest) {
           setState(() {
             hasEmergencyAlert = false;
@@ -198,10 +186,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     });
   }
 
-
-
-
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -209,9 +193,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
       appBar: _buildAppBar(),
       body: Column(
         children: [
-          // Emergency Alert Banner
           if (hasEmergencyAlert) _buildEmergencyAlert(),
-          // Tab Content
           Expanded(
             child: TabBarView(
               controller: _tabController,
@@ -274,7 +256,15 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         Padding(
           padding: const EdgeInsets.only(right: 16, top: 8),
           child: Text(
-            '${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+            '${DateTime
+                .now()
+                .hour
+                .toString()
+                .padLeft(2, '0')}:${DateTime
+                .now()
+                .minute
+                .toString()
+                .padLeft(2, '0')}',
             style: const TextStyle(
               color: Colors.white70,
               fontSize: 14,
@@ -347,8 +337,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           hasActiveEmergencyRequest
               ? _buildEmergencyRequestCard()
               : _buildActiveRequestsCard(),
-          const SizedBox(height: 20),
-          _buildStatsCards(),
         ],
       ),
     );
@@ -452,7 +440,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
       ),
       child: Column(
         children: [
-          // Emergency Request Header
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
@@ -488,7 +475,8 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: Colors.red,
                     borderRadius: BorderRadius.circular(12),
@@ -505,8 +493,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
               ],
             ),
           ),
-
-          // Request Details
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -520,21 +506,18 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                   ),
                 ),
                 const SizedBox(height: 16),
-
-                _buildDetailRow('Current\\nLocation:', currentEmergencyRequest!['currentLocation']),
+                _buildDetailRow('Current\nLocation:',
+                    currentEmergencyRequest!['currentLocation']),
                 const SizedBox(height: 12),
-
-                // ✅ FIXED: Display correct destination from Firebase
-                _buildDetailRow('Destination:', currentEmergencyRequest!['destination'] ?? 'Unknown'),
+                _buildDetailRow('Destination:',
+                    currentEmergencyRequest!['destination'] ?? 'Unknown'),
                 const SizedBox(height: 12),
-
-                _buildDetailRow('ETA:', currentEmergencyRequest!['eta'] ?? '--'),
+                _buildDetailRow(
+                    'ETA:', currentEmergencyRequest!['eta'] ?? '--'),
                 const SizedBox(height: 12),
-
-                _buildDetailRow('Distance:', currentEmergencyRequest!['distance'] ?? '--'),
+                _buildDetailRow(
+                    'Distance:', currentEmergencyRequest!['distance'] ?? '--'),
                 const SizedBox(height: 20),
-
-                // Clear Route Button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -565,7 +548,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
       ),
     );
   }
-
 
   Widget _buildDetailRow(String label, String value) {
     return Row(
@@ -644,92 +626,19 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           ),
           const SizedBox(height: 12),
           Text(
-            'Last updated: ${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+            'Last updated: ${DateTime
+                .now()
+                .hour
+                .toString()
+                .padLeft(2, '0')}:${DateTime
+                .now()
+                .minute
+                .toString()
+                .padLeft(2, '0')}',
             style: TextStyle(
               fontSize: 12,
               color: Colors.grey[500],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatsCards() {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildStatCard(
-            icon: Icons.check_circle_outline,
-            value: todaysClearances.toString(),
-            label: "Today's Clearances",
-            color: const Color(0xFF4CAF50),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: _buildStatCard(
-            icon: Icons.timer_outlined,
-            value: avgResponseTime,
-            label: 'Avg Response',
-            color: const Color(0xFFFF9800),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStatCard({
-    required IconData icon,
-    required String value,
-    required String label,
-    required Color color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              icon,
-              color: color,
-              size: 24,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[600],
-            ),
-            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -813,9 +722,10 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => EmergencyResponseScreen(
-              emergencyRequest: currentEmergencyRequest!,
-            ),
+            builder: (context) =>
+                EmergencyResponseScreen(
+                  emergencyRequest: currentEmergencyRequest!,
+                ),
           ),
         );
 
@@ -827,9 +737,8 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           ),
         );
 
-        // Update statistics
+        // Clear the emergency request state
         setState(() {
-          todaysClearances++;
           hasActiveEmergencyRequest = false;
           hasEmergencyAlert = false;
         });
