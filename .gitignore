@@ -1,0 +1,12 @@
+# Backend sensitive files
+aarcs_backend/config/firebase-service-account.json
+aarcs_backend/.env
+aarcs_backend/config/*.json
+
+# Environment files
+**/.env
+**/.env.local
+
+# Firebase private keys
+**/*.pem
+**/*.key
