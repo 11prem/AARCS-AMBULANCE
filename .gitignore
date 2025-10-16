@@ -15,6 +15,16 @@ aarcs_ambulance/.env
 **/*.pem
 **/*.key
 
+# Dart SDK (should not be in repo)
+aarcs_ambulance/Dart/
+**/dart-sdk/
+
+# Flutter build files
+**/build/
+**/android/build/
+**/ios/build/
+
+
 # IDE
 .idea/
 .vscode/
