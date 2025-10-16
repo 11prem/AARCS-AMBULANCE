@@ -45,3 +45,4 @@ flutter:
 
   assets:
     - .env
+    - assets/icons/amb.png

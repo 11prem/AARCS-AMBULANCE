@@ -124,6 +124,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   bool _isTrafficClearing = false;
   bool _isLoading = true;
   String? _errorMessage;
+  BitmapDescriptor? _ambulanceIcon;
+  double _currentZoom = 15.0;
+
 
   // Navigation specific variables
   bool _isNavigating = false;
@@ -142,9 +145,32 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   final String _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
   StreamSubscription<Position>? _positionSubscription;
 
+  Future<void> _loadCustomMarkerIcon({double zoom = 15.0}) async {
+    try {
+      // ✅ UBER-STYLE: Fixed 45px size (professional, compact)
+      double markerSize = 45.0;
+
+      _ambulanceIcon = await BitmapDescriptor.fromAssetImage(
+        ImageConfiguration(
+          size: Size(markerSize, markerSize),
+          devicePixelRatio: 2.5, // High quality on all devices
+        ),
+        'assets/icons/amb.png',
+      );
+      print('✅ Ambulance icon loaded: ${markerSize.toInt()}px');
+    } catch (e) {
+      print('❌ Failed to load ambulance icon: $e');
+      _ambulanceIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
+    }
+  }
+
+
+
+
   @override
   void initState() {
     super.initState();
+    _loadCustomMarkerIcon();
     _initializeNavigation();
   }
 
@@ -238,10 +264,11 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
+
   void _startLocationTracking() {
     const locationSettings = LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 5,
+      distanceFilter: 10, // ✅ Changed from 5 to 10 meters (less jittery)
     );
 
     _positionSubscription = Geolocator.getPositionStream(
@@ -256,6 +283,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     );
   }
 
+
   void _updateLocation(Position newPosition) {
     if (_currentPosition != null) {
       final double distanceInMeters = Geolocator.distanceBetween(
@@ -265,6 +293,12 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         newPosition.longitude,
       );
 
+      // ✅ FIX 1: Ignore GPS noise - Only update if moved more than 10 meters
+      if (distanceInMeters < 10.0) {
+        print('⏸️ Movement too small (${ distanceInMeters.toStringAsFixed(1)}m), ignoring GPS noise');
+        return; // Don't update marker for small movements
+      }
+
       final int deltaTime = newPosition.timestamp != null && _currentPosition!.timestamp != null
           ? newPosition.timestamp!.difference(_currentPosition!.timestamp!).inMilliseconds
           : 0;
@@ -273,12 +307,15 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         final double speedMps = distanceInMeters / (deltaTime / 1000);
         final double speedKmh = speedMps * 3.6;
 
-        _currentBearing = Geolocator.bearingBetween(
-          _currentPosition!.latitude,
-          _currentPosition!.longitude,
-          newPosition.latitude,
-          newPosition.longitude,
-        );
+        // ✅ FIX 2: Only update bearing if actually moving (speed > 2 km/h)
+        if (speedKmh > 2.0) {
+          _currentBearing = Geolocator.bearingBetween(
+            _currentPosition!.latitude,
+            _currentPosition!.longitude,
+            newPosition.latitude,
+            newPosition.longitude,
+          );
+        }
 
         setState(() {
           _currentSpeed = speedKmh;
@@ -286,15 +323,69 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       }
     }
 
+    // ✅ FIX 3: Snap ambulance to route (blue line) instead of raw GPS
+    LatLng snappedPosition = _snapToRoute(
+        LatLng(newPosition.latitude, newPosition.longitude)
+    );
+
     setState(() {
-      _currentPosition = newPosition;
+      // Use snapped position instead of raw GPS
+      _currentPosition = Position(
+        latitude: snappedPosition.latitude,
+        longitude: snappedPosition.longitude,
+        timestamp: newPosition.timestamp,
+        accuracy: newPosition.accuracy,
+        altitude: newPosition.altitude,
+        heading: newPosition.heading,
+        speed: newPosition.speed,
+        speedAccuracy: newPosition.speedAccuracy,
+        altitudeAccuracy: newPosition.altitudeAccuracy,
+        headingAccuracy: newPosition.headingAccuracy,
+      );
     });
+
+    // Update marker position
+    _updateAmbulanceMarker();
 
     if (_isNavigating) {
       _updateRouteProgress();
       _updateNavigationCamera();
     }
   }
+
+  // ✅ Snap GPS location to the nearest point on the blue route
+  LatLng _snapToRoute(LatLng currentLocation) {
+    if (_routePoints.isEmpty) {
+      return currentLocation; // No route yet, use raw GPS
+    }
+
+    // Find nearest point on the route
+    double minDistance = double.infinity;
+    LatLng nearestPoint = currentLocation;
+
+    for (int i = 0; i < _routePoints.length; i++) {
+      double distance = RouteProgressHelper.distanceHaversine(
+        currentLocation,
+        _routePoints[i],
+      );
+
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestPoint = _routePoints[i];
+      }
+    }
+
+    // Only snap if GPS is within 50 meters of route (avoid snapping if way off route)
+    if (minDistance < 50.0) {
+      print('📍 Snapped to route (${minDistance.toStringAsFixed(1)}m away)');
+      return nearestPoint;
+    }
+
+    print('⚠️ Too far from route (${minDistance.toStringAsFixed(1)}m), using GPS');
+    return currentLocation; // Too far off route, use raw GPS
+  }
+
+
 
   void _updateRouteProgress() {
     if (_routePoints.isEmpty || _currentPosition == null) return;
@@ -383,6 +474,25 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       );
     }
   }
+
+  // Method to update ambulance marker position in real-time
+  void _updateAmbulanceMarker() {
+    if (_currentPosition == null) return;
+
+    setState(() {
+      // Find and update only the ambulance marker, keep destination marker unchanged
+      _markers = _markers.map((marker) {
+        if (marker.markerId.value == 'current_location') {
+          return marker.copyWith(
+            positionParam: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+            rotationParam: _currentBearing,
+          );
+        }
+        return marker;
+      }).toSet();
+    });
+  }
+
 
   Future<void> _getDirections() async {
     if (_currentPosition == null) {
@@ -544,19 +654,23 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   void _addMarkersToMap(double destLat, double destLng) {
     setState(() {
       _markers = {
+        // 🚑 Ambulance marker with custom icon and rotation
         Marker(
           markerId: const MarkerId('current_location'),
           position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+          icon: _ambulanceIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+          rotation: _currentBearing, // Rotates ambulance in movement direction
+          anchor: const Offset(0.5, 0.5), // Center rotation point
           infoWindow: InfoWindow(
             title: 'Ambulance ${widget.ambulanceId}',
             snippet: 'Current Location',
           ),
         ),
+
+        // 🏥 Destination marker (unchanged)
         Marker(
           markerId: const MarkerId('destination'),
           position: LatLng(destLat, destLng),
-          // ✅ CHANGED: From hueRed to hueCyan for glowing blue destination marker
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueCyan),
           infoWindow: InfoWindow(
             title: widget.destination,
@@ -566,6 +680,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       };
     });
   }
+
 
   String _cleanHtmlTags(String htmlString) {
     RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
@@ -753,6 +868,17 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               compassEnabled: true,
               trafficEnabled: true,
               mapType: MapType.normal,
+
+              // ✅ NEW: Track zoom level changes
+              onCameraMove: (CameraPosition position) {
+                _currentZoom = position.zoom;
+              },
+
+              // ✅ NEW: Reload marker icon when zoom stops
+              onCameraIdle: () async {
+                await _loadCustomMarkerIcon(zoom: _currentZoom);
+                _updateAmbulanceMarker();
+              },
             ),
           ),
 
@@ -853,8 +979,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                 ),
               ),
             ),
-
-          // ✅ REMOVED: Location active indicator (entire Positioned widget removed)
 
           // Clear traffic button
           Positioned(
