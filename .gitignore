@@ -1,12 +1,20 @@
 # Backend sensitive files
-aarcs_backend/config/firebase-service-account.json
+aarcs_backend/config/
 aarcs_backend/.env
-aarcs_backend/config/*.json
+aarcs_backend/node_modules/
+
+# Flutter sensitive files
+aarcs_ambulance/.env
 
 # Environment files
 **/.env
 **/.env.local
 
 # Firebase private keys
+**/firebase-service-account.json
 **/*.pem
 **/*.key
+
+# IDE
+.idea/
+.vscode/

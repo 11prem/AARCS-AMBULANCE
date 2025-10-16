@@ -4,6 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/dashboard.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:firebase_auth/firebase_auth.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -79,11 +82,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _rememberMe = false;
   bool _isButtonPressed = false;
 
-  final Map<String, String> validCredentials = {
-    "AMB001": "emergency123",
-    "AMB002": "emergency234",
-    "AMB003": "emergency456",
-  };
 
   // SharedPreferences keys
   static const String _ambulanceIdKey = 'ambulance_id';
@@ -125,7 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (_rememberMe) {
         // Save credentials if Remember Me is checked
-        await prefs.setString(_ambulanceIdKey, _idController.text.trim());
+        await prefs.setString(_ambulanceIdKey, _idController.text.trim().toUpperCase());
         await prefs.setString(_passwordKey, _passwordController.text.trim());
         await prefs.setBool(_rememberMeKey, true);
       } else {
@@ -153,30 +151,127 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _login() async {
-    String id = _idController.text.trim();
+    String id = _idController.text.trim().toUpperCase();
     String password = _passwordController.text.trim();
 
-    if (validCredentials.containsKey(id) &&
-        validCredentials[id] == password) {
-
-      // Save credentials based on Remember Me checkbox state
-      await _saveCredentials();
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => DashboardScreen(
-            ambulanceId: id,
-            onToggleTheme: widget.onToggleTheme,
-          ),
-        ),
-      );
-    } else {
+    if (id.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Invalid Ambulance ID or Password")),
+        const SnackBar(content: Text("Please enter Ambulance ID and Password")),
       );
+      return;
+    }
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(color: Colors.red),
+      ),
+    );
+
+    try {
+      // Get backend URL from environment
+      final backendUrl = dotenv.env['BACKEND_URL'] ?? 'http://10.0.2.2:3000';
+
+      print('🔍 Connecting to: $backendUrl');
+      print('🚑 Authenticating: $id');
+
+      // Send authentication request to backend
+      final response = await http.post(
+        Uri.parse('$backendUrl/authenticate'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'ambulanceId': id,
+          'password': password,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      // Close loading dialog
+      if (mounted) Navigator.of(context).pop();
+
+      print('📡 Response status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+
+        if (responseData['success'] == true) {
+          final String customToken = responseData['token'];
+          final String ambulanceId = responseData['ambulanceId'];
+
+          print('✅ Token received, signing in to Firebase...');
+
+          // Sign in to Firebase with custom token
+          await FirebaseAuth.instance.signInWithCustomToken(customToken);
+
+          // Save credentials if remember me is checked
+          await _saveCredentials();
+
+          print('✅ Login successful!');
+
+          // Navigate to dashboard
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => DashboardScreen(
+                  ambulanceId: ambulanceId,
+                  onToggleTheme: widget.onToggleTheme,
+                ),
+              ),
+            );
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(responseData['message'] ?? 'Invalid credentials'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Invalid Ambulance ID or Password"),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } on http.ClientException catch (e) {
+      if (mounted && Navigator.canPop(context)) Navigator.of(context).pop();
+
+      print('❌ Connection Error: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Cannot connect to server. Check backend is running."),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted && Navigator.canPop(context)) Navigator.of(context).pop();
+
+      print('❌ Error: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
