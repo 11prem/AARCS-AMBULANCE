@@ -125,7 +125,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   BitmapDescriptor? _ambulanceIcon;
-  double _currentZoom = 15.0;
+  double _currentZoom = 18.5;
 
 
   // Navigation specific variables
@@ -141,6 +141,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   List<LatLng> _routePoints = [];
   int _currentRoutePointIndex = 0;
   Timer? _routeUpdateTimer;
+  Timer? _instructionDismissTimer;
+  bool _showInstructionCard = true;
 
   final String _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
   StreamSubscription<Position>? _positionSubscription;
@@ -179,8 +181,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     _positionSubscription?.cancel();
     _mapController?.dispose();
     _routeUpdateTimer?.cancel();
+    _instructionDismissTimer?.cancel(); // ✅ NEW: Cleanup dismiss timer
     super.dispose();
   }
+
 
   Future<void> _initializeNavigation() async {
     try {
@@ -455,10 +459,14 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             _nextInstruction = _cleanHtmlTags(_routeSteps[i + 1]['html_instructions']);
           }
         });
+
+        // ✅ NEW: Show card and start auto-dismiss timer
+        _startInstructionDismissTimer();
         break;
       }
     }
   }
+
 
   void _updateNavigationCamera() {
     if (_mapController != null && _currentPosition != null) {
@@ -466,7 +474,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         CameraUpdate.newCameraPosition(
           CameraPosition(
             target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-            zoom: 18.0,
+            zoom: 18.5,
             bearing: _currentBearing,
             tilt: 45.0,
           ),
@@ -474,6 +482,24 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       );
     }
   }
+
+  // Auto-dismiss instruction card after 5 seconds
+  void _startInstructionDismissTimer() {
+    _instructionDismissTimer?.cancel();
+
+    setState(() {
+      _showInstructionCard = true;
+    });
+
+    _instructionDismissTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted) {
+        setState(() {
+          _showInstructionCard = false;
+        });
+      }
+    });
+  }
+
 
   // Method to update ambulance marker position in real-time
   void _updateAmbulanceMarker() {
@@ -855,7 +881,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             child: GoogleMap(
               initialCameraPosition: CameraPosition(
                 target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-                zoom: 15,
+                zoom: 18.5,
+                bearing: 0,
+                tilt: 0,
               ),
               onMapCreated: (controller) {
                 _mapController = controller;
@@ -898,51 +926,73 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             ),
 
           // Navigation instructions card
-          if (_isNavigating && _currentInstruction.isNotEmpty)
+          // ✅ NEW: Swipeable Navigation instructions card with auto-dismiss
+          if (_isNavigating && _currentInstruction.isNotEmpty && _showInstructionCard)
             Positioned(
               top: 100,
               left: 16,
               right: 16,
-              child: Card(
-                color: Colors.green,
-                elevation: 8,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.arrow_upward, color: Colors.white, size: 32),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              _currentInstruction,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+              child: Dismissible(
+                key: Key('instruction_$_currentStepIndex'),
+                direction: DismissDirection.horizontal,
+                onDismissed: (direction) {
+                  setState(() {
+                    _showInstructionCard = false;
+                  });
+                  _instructionDismissTimer?.cancel();
+                  print('👆 Instruction card swiped away');
+                },
+                child: Card(
+                  color: Colors.green,
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.arrow_upward, color: Colors.white, size: 32),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _currentInstruction,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
+                            ),
+                            // ✅ NEW: Swipe indicator
+                            const Icon(Icons.swipe, color: Colors.white70, size: 20),
+                          ],
+                        ),
+                        if (_nextInstruction.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Then: $_nextInstruction',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
                             ),
                           ),
                         ],
-                      ),
-                      if (_nextInstruction.isNotEmpty) ...[
+                        // ✅ NEW: Auto-dismiss countdown indicator
                         const SizedBox(height: 8),
-                        Text(
-                          'Then: $_nextInstruction',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 14,
-                          ),
+                        LinearProgressIndicator(
+                          value: 0.2, // Visual indicator (optional)
+                          backgroundColor: Colors.white24,
+                          valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
             ),
+
 
           // Speed indicator
           if (!_isLoading)
