@@ -18,7 +18,7 @@ app.use(bodyParser.json());
 const ambulanceCredentials = {
   'AMB001': 'emergency123',
   'AMB002': 'emergency234',
-  'AMB003': 'emergency345'
+  'AMB003': 'emergency456'
 };
 
 // Traffic Police credentials
@@ -34,8 +34,8 @@ function getTimestamp() {
   return now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 }
 
-// Ambulance authentication endpoint
-app.post('/authenticate/ambulance', async (req, res) => {
+// Shared ambulance authentication logic
+async function authenticateAmbulance(req, res) {
   const { ambulanceId, password } = req.body;
   const timestamp = getTimestamp();
 
@@ -60,6 +60,7 @@ app.post('/authenticate/ambulance', async (req, res) => {
         success: true,
         token: customToken,
         userId: ambulanceId,
+        ambulanceId: ambulanceId,  // For backward compatibility
         role: 'ambulance_driver'
       });
     } catch (error) {
@@ -82,7 +83,13 @@ app.post('/authenticate/ambulance', async (req, res) => {
       message: 'Invalid Ambulance ID or Password'
     });
   }
-});
+}
+
+// Legacy ambulance endpoint (for backward compatibility)
+app.post('/authenticate', authenticateAmbulance);
+
+// New ambulance endpoint
+app.post('/authenticate/ambulance', authenticateAmbulance);
 
 // Traffic Police authentication endpoint
 app.post('/authenticate/police', async (req, res) => {
@@ -132,12 +139,6 @@ app.post('/authenticate/police', async (req, res) => {
       message: 'Invalid Police ID or Password'
     });
   }
-});
-
-// Legacy endpoint for backward compatibility (ambulance)
-app.post('/authenticate', async (req, res) => {
-  req.body.ambulanceId = req.body.ambulanceId || req.body.userId;
-  return app._router.handle({ ...req, url: '/authenticate/ambulance', method: 'POST' }, res);
 });
 
 // Health check endpoint
