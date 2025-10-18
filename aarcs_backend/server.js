@@ -14,11 +14,18 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// Your ambulance credentials
-const validCredentials = {
+// Ambulance credentials
+const ambulanceCredentials = {
   'AMB001': 'emergency123',
   'AMB002': 'emergency234',
-  'AMB003': 'emergency456'
+  'AMB003': 'emergency345'
+};
+
+// Traffic Police credentials
+const trafficPoliceCredentials = {
+  'POL001': 'traffic123',
+  'POL002': 'traffic234',
+  'POL003': 'traffic345'
 };
 
 // Helper function to get current timestamp
@@ -27,33 +34,33 @@ function getTimestamp() {
   return now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 }
 
-// Login endpoint with enhanced logging
-app.post('/authenticate', async (req, res) => {
+// Ambulance authentication endpoint
+app.post('/authenticate/ambulance', async (req, res) => {
   const { ambulanceId, password } = req.body;
   const timestamp = getTimestamp();
 
   console.log('\n' + '='.repeat(60));
-  console.log(`🚑 [${timestamp}] Login Attempt`);
+  console.log(`🚑 [${timestamp}] Ambulance Login Attempt`);
   console.log(`   Ambulance ID: ${ambulanceId}`);
   console.log('='.repeat(60));
 
-  if (validCredentials[ambulanceId] && validCredentials[ambulanceId] === password) {
+  if (ambulanceCredentials[ambulanceId] && ambulanceCredentials[ambulanceId] === password) {
     try {
-      // Create custom token with ambulance ID as uid
       const customToken = await admin.auth().createCustomToken(ambulanceId, {
-        ambulanceId: ambulanceId,
-        role: 'ambulance_driver'
+        userId: ambulanceId,
+        role: 'ambulance_driver',
+        type: 'ambulance'
       });
 
       console.log(`✅ [${timestamp}] ${ambulanceId} logged in successfully!`);
-      console.log(`   Token generated for: ${ambulanceId}`);
       console.log(`   Role: ambulance_driver`);
       console.log('='.repeat(60) + '\n');
 
       res.json({
         success: true,
         token: customToken,
-        ambulanceId: ambulanceId
+        userId: ambulanceId,
+        role: 'ambulance_driver'
       });
     } catch (error) {
       console.error(`❌ [${timestamp}] Token generation failed for ${ambulanceId}`);
@@ -77,6 +84,62 @@ app.post('/authenticate', async (req, res) => {
   }
 });
 
+// Traffic Police authentication endpoint
+app.post('/authenticate/police', async (req, res) => {
+  const { policeId, password } = req.body;
+  const timestamp = getTimestamp();
+
+  console.log('\n' + '='.repeat(60));
+  console.log(`🚔 [${timestamp}] Traffic Police Login Attempt`);
+  console.log(`   Police ID: ${policeId}`);
+  console.log('='.repeat(60));
+
+  if (trafficPoliceCredentials[policeId] && trafficPoliceCredentials[policeId] === password) {
+    try {
+      const customToken = await admin.auth().createCustomToken(policeId, {
+        userId: policeId,
+        role: 'traffic_police',
+        type: 'police'
+      });
+
+      console.log(`✅ [${timestamp}] ${policeId} logged in successfully!`);
+      console.log(`   Role: traffic_police`);
+      console.log('='.repeat(60) + '\n');
+
+      res.json({
+        success: true,
+        token: customToken,
+        userId: policeId,
+        role: 'traffic_police'
+      });
+    } catch (error) {
+      console.error(`❌ [${timestamp}] Token generation failed for ${policeId}`);
+      console.error(`   Error: ${error.message}`);
+      console.log('='.repeat(60) + '\n');
+
+      res.status(500).json({
+        success: false,
+        message: 'Server error'
+      });
+    }
+  } else {
+    console.log(`❌ [${timestamp}] Login failed for ${policeId}`);
+    console.log(`   Reason: Invalid credentials`);
+    console.log('='.repeat(60) + '\n');
+
+    res.status(401).json({
+      success: false,
+      message: 'Invalid Police ID or Password'
+    });
+  }
+});
+
+// Legacy endpoint for backward compatibility (ambulance)
+app.post('/authenticate', async (req, res) => {
+  req.body.ambulanceId = req.body.ambulanceId || req.body.userId;
+  return app._router.handle({ ...req, url: '/authenticate/ambulance', method: 'POST' }, res);
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   const timestamp = getTimestamp();
@@ -92,7 +155,8 @@ app.listen(PORT, () => {
   console.log(`📡 Server running on: http://localhost:${PORT}`);
   console.log(`📁 Firebase config loaded successfully`);
   console.log(`⏰ Server started at: ${getTimestamp()}`);
-  console.log(`🔐 Authentication ready for ambulances: ${Object.keys(validCredentials).join(', ')}`);
+  console.log(`\n🚑 Ambulances: ${Object.keys(ambulanceCredentials).join(', ')}`);
+  console.log(`🚔 Police: ${Object.keys(trafficPoliceCredentials).join(', ')}`);
   console.log('█'.repeat(60) + '\n');
   console.log('Waiting for login requests...\n');
 });

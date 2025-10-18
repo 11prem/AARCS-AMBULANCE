@@ -4,6 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/dashboard.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:firebase_auth/firebase_auth.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,12 +30,11 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  ThemeMode _themeMode = ThemeMode.light; // default is light
+  ThemeMode _themeMode = ThemeMode.light;
 
   void _toggleTheme() {
     setState(() {
-      _themeMode =
-      _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+      _themeMode = _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
     });
   }
 
@@ -79,13 +81,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _rememberMe = false;
   bool _isButtonPressed = false;
 
-  final Map<String, String> validCredentials = {
-    "POL001": "traffic123",
-    "POL002": "traffic234",
-    "POL003": "traffic456",
-  };
-
-  // SharedPreferences keys
   static const String _policeIdKey = 'police_id';
   static const String _passwordKey = 'password';
   static const String _rememberMeKey = 'remember_me';
@@ -96,14 +91,15 @@ class _LoginScreenState extends State<LoginScreen> {
     _loadSavedCredentials();
   }
 
-  // Load saved credentials from SharedPreferences
   Future<void> _loadSavedCredentials() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedRememberMe = prefs.getBool(_rememberMeKey) ?? false;
+
       if (savedRememberMe) {
         final savedId = prefs.getString(_policeIdKey) ?? '';
         final savedPassword = prefs.getString(_passwordKey) ?? '';
+
         setState(() {
           _idController.text = savedId;
           _passwordController.text = savedPassword;
@@ -115,17 +111,15 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Save credentials to SharedPreferences
   Future<void> _saveCredentials() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+
       if (_rememberMe) {
-        // Save credentials if Remember Me is checked
-        await prefs.setString(_policeIdKey, _idController.text.trim());
+        await prefs.setString(_policeIdKey, _idController.text.trim().toUpperCase());
         await prefs.setString(_passwordKey, _passwordController.text.trim());
         await prefs.setBool(_rememberMeKey, true);
       } else {
-        // Clear saved credentials if Remember Me is unchecked
         await prefs.remove(_policeIdKey);
         await prefs.remove(_passwordKey);
         await prefs.setBool(_rememberMeKey, false);
@@ -135,7 +129,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Clear all saved credentials
   Future<void> _clearSavedCredentials() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -148,35 +141,114 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _login() async {
-    String id = _idController.text.trim();
+    String id = _idController.text.trim().toUpperCase();
     String password = _passwordController.text.trim();
 
-    if (validCredentials.containsKey(id) &&
-        validCredentials[id] == password) {
-      // Save credentials based on Remember Me checkbox state
-      await _saveCredentials();
+    if (id.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please enter Police ID and Password")),
+      );
+      return;
+    }
 
-      // Show success message
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => AARCSTrafficPoliceDashboard(),
-          ),
-        );
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(color: Colors.blue),
+      ),
+    );
 
-        // Only clear the form if Remember Me is not checked
-        if (!_rememberMe) {
-          _idController.clear();
-          _passwordController.clear();
+    try {
+      final backendUrl = dotenv.env['BACKEND_URL'] ?? 'http://10.0.2.2:3000';
+
+      print('🔍 Connecting to: $backendUrl/authenticate/police');
+      print('🚔 Authenticating: $id');
+
+      // Send authentication request to police endpoint
+      final response = await http.post(
+        Uri.parse('$backendUrl/authenticate/police'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'policeId': id,
+          'password': password,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (mounted) Navigator.of(context).pop();
+
+      print('📡 Response status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final responseData = json.decode(response.body);
+
+        if (responseData['success'] == true) {
+          final String customToken = responseData['token'];
+          final String policeId = responseData['userId'];
+
+          print('✅ Token received, signing in to Firebase...');
+
+          // Sign in to Firebase with custom token
+          await FirebaseAuth.instance.signInWithCustomToken(customToken);
+
+          await _saveCredentials();
+
+          print('✅ Login successful!');
+
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => AARCSTrafficPoliceDashboard(),
+              ),
+            );
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(responseData['message'] ?? 'Invalid credentials'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Invalid Police ID or Password"),
+              backgroundColor: Colors.red,
+            ),
+          );
         }
       }
-    } else {
+    } on http.ClientException catch (e) {
+      if (mounted && Navigator.canPop(context)) Navigator.of(context).pop();
+
+      print('❌ Connection Error: $e');
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Invalid Police ID or Password"),
+            content: Text("Cannot connect to server. Check backend is running."),
             backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted && Navigator.canPop(context)) Navigator.of(context).pop();
+
+      print('❌ Error: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
           ),
         );
       }
@@ -192,7 +264,6 @@ class _LoginScreenState extends State<LoginScreen> {
           child: SingleChildScrollView(
             child: Column(
               children: [
-                // 🌞/🌙 Theme toggle
                 Align(
                   alignment: Alignment.topRight,
                   child: IconButton(
@@ -203,7 +274,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: widget.onToggleTheme,
                   ),
                 ),
-                // 🚔 Logo
                 CircleAvatar(
                   radius: 40,
                   backgroundColor: Colors.blue,
@@ -223,7 +293,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: TextStyle(fontSize: 16, color: Colors.grey),
                 ),
                 const SizedBox(height: 30),
-                // Police ID
                 TextField(
                   controller: _idController,
                   decoration: const InputDecoration(
@@ -231,9 +300,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     prefixIcon: Icon(Icons.badge, color: Colors.blue),
                     border: OutlineInputBorder(),
                   ),
+                  textCapitalization: TextCapitalization.characters,
                 ),
                 const SizedBox(height: 20),
-                // Password
                 TextField(
                   controller: _passwordController,
                   obscureText: _obscurePassword,
@@ -267,7 +336,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         setState(() {
                           _rememberMe = value ?? false;
                         });
-                        // If unchecked, clear saved credentials immediately
                         if (!_rememberMe) {
                           _clearSavedCredentials();
                         }
