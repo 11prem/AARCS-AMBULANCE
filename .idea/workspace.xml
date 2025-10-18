@@ -11,7 +11,7 @@
   <component name="ChangeListManager">
     <list default="true" id="09ab5d6f-3528-4958-99f3-8e70c7455b13" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_backend/server.js" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_backend/server.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/route_navigation.dart" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/route_navigation.dart" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -67,7 +67,7 @@
     &quot;git-widget-placeholder&quot;: &quot;main&quot;,
     &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
     &quot;io.flutter.reload.alreadyRun&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;D:/AARCS&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/IMPORTANT DOCUMENTS/STUDY/Flutter Projects/AARCS-AMBULANCE/aarcs_traffic-police/assets/icons&quot;,
     &quot;project.structure.last.edited&quot;: &quot;Project&quot;,
     &quot;project.structure.proportion&quot;: &quot;0.0&quot;,
     &quot;project.structure.side.proportion&quot;: &quot;0.0&quot;,
@@ -76,7 +76,11 @@
   }
 }</component>
   <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\IMPORTANT DOCUMENTS\STUDY\Flutter Projects\AARCS-AMBULANCE\aarcs_traffic-police\assets\icons" />
+    </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\IMPORTANT DOCUMENTS\STUDY\Flutter Projects\AARCS-AMBULANCE\aarcs_traffic-police\assets" />
       <recent name="C:\IMPORTANT DOCUMENTS\STUDY\Flutter Projects\AARCS-AMBULANCE\aarcs_traffic-police" />
     </key>
   </component>

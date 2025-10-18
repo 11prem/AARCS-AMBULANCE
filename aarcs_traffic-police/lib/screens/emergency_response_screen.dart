@@ -8,7 +8,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 class EmergencyResponseScreen extends StatefulWidget {
-  final Map<String, dynamic> emergencyRequest;
+  final Map emergencyRequest;
 
   const EmergencyResponseScreen({
     Key? key,
@@ -16,45 +16,56 @@ class EmergencyResponseScreen extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  _EmergencyResponseScreenState createState() =>
-      _EmergencyResponseScreenState();
+  _EmergencyResponseScreenState createState() => _EmergencyResponseScreenState();
 }
 
 class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
   GoogleMapController? _mapController;
   Timer? _timer;
-
   int _seconds = 0;
   String get _formattedTime =>
       '${(_seconds ~/ 60).toString().padLeft(2, '0')}:${(_seconds % 60).toString().padLeft(2, '0')}';
-
   final String _googleApiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
   final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
-
   LatLng? _ambulanceLocation;
   LatLng? _destinationLocation;
   String _ambulanceId = '';
-
-  StreamSubscription<DatabaseEvent>? _locationSubscription;
+  StreamSubscription? _locationSubscription;
   bool _isLoading = true;
+
+  // ✅ NEW: Custom ambulance icon + bearing
+  BitmapDescriptor? _ambulanceIcon;
+  double _currentBearing = 0.0;
+  double _currentSpeed = 0.0;
 
   @override
   void initState() {
     super.initState();
-    print('🚓 Emergency Response Screen initialized');
-    print('🚓 Emergency Request data: ${widget.emergencyRequest}');
     _startTimer();
-    _initializeMap();
+    _initializeEverything(); // ✅ Load icon FIRST, then map
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _locationSubscription?.cancel();
-    _mapController?.dispose();
-    super.dispose();
+// ✅ NEW: Load icon BEFORE initializing map
+  Future<void> _initializeEverything() async {
+    await _loadAmbulanceIcon(); // ✅ Wait for icon to load first
+    await _initializeMap();      // ✅ Then initialize map
   }
+
+// ✅ Updated: Make icon loading faster and await-able
+  Future<void> _loadAmbulanceIcon() async {
+    try {
+      _ambulanceIcon = await BitmapDescriptor.fromAssetImage(
+        const ImageConfiguration(size: Size(60, 60)), // ✅ Slightly bigger for visibility
+        'assets/icons/amb.png',
+      );
+      setState(() {}); // ✅ Force rebuild after icon loads
+      print('✅ Ambulance icon loaded immediately');
+    } catch (e) {
+      print('⚠️ Could not load ambulance icon: $e');
+    }
+  }
+
 
   void _startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -65,116 +76,59 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
   Future<void> _initializeMap() async {
     try {
       print('🗺️ Initializing map...');
-
-      // Get ambulance ID - with null safety
       _ambulanceId = (widget.emergencyRequest['ambulanceId'] ?? 'AMB001').toString();
       print('🚑 Ambulance ID: $_ambulanceId');
 
-      // SAFE coordinate extraction
       await _extractCoordinates();
 
-      // If STILL no coordinates, use Chennai defaults
       _ambulanceLocation ??= const LatLng(13.0827, 80.2707);
       _destinationLocation ??= const LatLng(13.0900, 80.2800);
 
-      print('📍 Final ambulance location: $_ambulanceLocation');
-      print('📍 Final destination location: $_destinationLocation');
+      print('📍 Ambulance location: $_ambulanceLocation');
+      print('📍 Destination location: $_destinationLocation');
 
-      // Add markers
+      // ✅ Icon is already loaded, so this will work immediately
       _updateMarkers();
 
-      // Get route
       await _getDirectionsRoute();
-
-      // Listen to Firebase
       _listenToAmbulanceLocation();
 
       if (mounted) {
         setState(() => _isLoading = false);
-        print('✅ Map initialization complete');
+        print('✅ Map initialization complete with ambulance icon');
       }
-
     } catch (e, stackTrace) {
       print('❌ Error initializing map: $e');
       print('Stack trace: $stackTrace');
-
-      // Set fallback coordinates even on error
       _ambulanceLocation = const LatLng(13.0827, 80.2707);
       _destinationLocation = const LatLng(13.0900, 80.2800);
       _updateMarkers();
-
       if (mounted) {
         setState(() => _isLoading = false);
       }
     }
   }
 
+
   Future<void> _extractCoordinates() async {
     try {
-      // Try to get destination coordinates
       final destCoords = widget.emergencyRequest['destCoords'];
-      print('📍 destCoords raw: $destCoords (type: ${destCoords.runtimeType})');
-
-      if (destCoords != null) {
-        try {
-          if (destCoords is Map) {
-            final lat = destCoords['lat'];
-            final lng = destCoords['lng'];
-
-            if (lat != null && lng != null) {
-              _destinationLocation = LatLng(
-                _parseDouble(lat),
-                _parseDouble(lng),
-              );
-              print('✅ Destination from destCoords: $_destinationLocation');
-            }
-          }
-        } catch (e) {
-          print('⚠️ Error parsing destCoords: $e');
+      if (destCoords != null && destCoords is Map) {
+        final lat = destCoords['lat'];
+        final lng = destCoords['lng'];
+        if (lat != null && lng != null) {
+          _destinationLocation = LatLng(_parseDouble(lat), _parseDouble(lng));
         }
       }
 
-      // Try to get source coordinates
       final sourceCoords = widget.emergencyRequest['sourceCoords'];
-      print('📍 sourceCoords raw: $sourceCoords (type: ${sourceCoords.runtimeType})');
-
-      if (sourceCoords != null) {
-        try {
-          if (sourceCoords is Map) {
-            final lat = sourceCoords['lat'];
-            final lng = sourceCoords['lng'];
-
-            if (lat != null && lng != null) {
-              _ambulanceLocation = LatLng(
-                _parseDouble(lat),
-                _parseDouble(lng),
-              );
-              print('✅ Ambulance from sourceCoords: $_ambulanceLocation');
-            }
-          }
-        } catch (e) {
-          print('⚠️ Error parsing sourceCoords: $e');
+      if (sourceCoords != null && sourceCoords is Map) {
+        final lat = sourceCoords['lat'];
+        final lng = sourceCoords['lng'];
+        if (lat != null && lng != null) {
+          _ambulanceLocation = LatLng(_parseDouble(lat), _parseDouble(lng));
         }
       }
-
-      // If destination still null, try geocoding destination string
-      if (_destinationLocation == null) {
-        final destName = widget.emergencyRequest['destination'];
-        if (destName != null && destName.toString().isNotEmpty) {
-          print('🔍 Geocoding destination: $destName');
-          _destinationLocation = await _geocodeAddress(destName.toString());
-        }
-      }
-
-      // If ambulance location still null, try geocoding current location string
-      if (_ambulanceLocation == null) {
-        final currentLoc = widget.emergencyRequest['currentLocation'];
-        if (currentLoc != null && currentLoc.toString().isNotEmpty) {
-          print('🔍 Geocoding current location: $currentLoc');
-          _ambulanceLocation = await _geocodeAddress(currentLoc.toString());
-        }
-      }
-
     } catch (e) {
       print('❌ Error in _extractCoordinates: $e');
     }
@@ -188,110 +142,119 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
     return 0.0;
   }
 
-  Future<LatLng?> _geocodeAddress(String address) async {
-    if (address.isEmpty || _googleApiKey.isEmpty) return null;
-
-    try {
-      final url = 'https://maps.googleapis.com/maps/api/geocode/json'
-          '?address=${Uri.encodeComponent(address)}'
-          '&key=$_googleApiKey';
-
-      final response = await http.get(Uri.parse(url));
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 'OK' && (data['results'] as List).isNotEmpty) {
-          final location = data['results'][0]['geometry']['location'];
-          final coords = LatLng(
-            _parseDouble(location['lat']),
-            _parseDouble(location['lng']),
-          );
-          print('✅ Geocoded "$address" to $coords');
-          return coords;
-        } else {
-          print('⚠️ Geocoding API status: ${data['status']}');
-        }
-      }
-    } catch (e) {
-      print('❌ Geocoding error: $e');
-    }
-    return null;
-  }
-
+  // ✅ Real-time Firebase sync (matches ambulance app)
   void _listenToAmbulanceLocation() {
     try {
-      print('👂 Starting Firebase listener for $_ambulanceId');
+      print('👂 Setting up Firebase listener for ambulance: $_ambulanceId');
 
-      final databaseRef = FirebaseDatabase.instanceFor(
+      _locationSubscription = FirebaseDatabase.instanceFor(
         app: Firebase.app(),
         databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
-      ).ref();
-
-      _locationSubscription = databaseRef
-          .child('ambulance_locations')
-          .child(_ambulanceId)
+      )
+          .ref()
+          .child('emergency_requests')
+          .orderByChild('ambulanceId')
+          .equalTo(_ambulanceId)
+          .limitToLast(1)
           .onValue
-          .listen((DatabaseEvent event) {
-        if (event.snapshot.exists && mounted) {
-          try {
-            final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-            final lat = data['latitude'];
-            final lng = data['longitude'];
+          .listen((event) {
+        if (!mounted) return;
 
-            if (lat != null && lng != null) {
-              print('📍 Firebase update: $lat, $lng');
+        try {
+          if (event.snapshot.value != null) {
+            final requests = event.snapshot.value as Map;
+            final requestData = requests.values.first as Map;
 
-              setState(() {
-                _ambulanceLocation = LatLng(_parseDouble(lat), _parseDouble(lng));
-                _updateMarkers();
-              });
+            print('📡 Received live location update from Firebase');
 
-              _mapController?.animateCamera(
-                CameraUpdate.newLatLng(_ambulanceLocation!),
-              );
+            final liveLocation = requestData['liveLocation'];
+            if (liveLocation != null && liveLocation is Map) {
+              final lat = _parseDouble(liveLocation['lat']);
+              final lng = _parseDouble(liveLocation['lng']);
+              _currentBearing = _parseDouble(liveLocation['bearing'] ?? 0);
+              _currentSpeed = _parseDouble(liveLocation['speed'] ?? 0);
+
+              if (mounted) {
+                setState(() {
+                  _ambulanceLocation = LatLng(lat, lng);
+                  _updateMarkers();
+
+                  // ✅ Same camera behavior as ambulance app
+                  _mapController?.animateCamera(
+                    CameraUpdate.newCameraPosition(
+                      CameraPosition(
+                        target: _ambulanceLocation!,
+                        zoom: 18.5, // ✅ Same zoom as ambulance app
+                        bearing: _currentBearing,
+                        tilt: 0,
+                      ),
+                    ),
+                  );
+                });
+              }
+
+              print('✅ Updated: $lat, $lng, bearing: $_currentBearing°, speed: ${_currentSpeed.toStringAsFixed(1)} km/h');
             }
-          } catch (e) {
-            print('⚠️ Error processing Firebase data: $e');
           }
+        } catch (e) {
+          print('⚠️ Error processing Firebase data: $e');
         }
       }, onError: (error) {
         print('❌ Firebase listener error: $error');
       });
+
+      print('✅ Firebase listener set up successfully');
     } catch (e) {
       print('❌ Error setting up Firebase listener: $e');
     }
   }
 
+  // ✅ Update markers (custom ambulance icon + red destination)
+  // ✅ Update markers - Custom ambulance icon ONLY (no blue fallback)
   void _updateMarkers() {
-    _markers.clear();
+    if (_ambulanceLocation == null || _destinationLocation == null) return;
 
-    if (_ambulanceLocation != null) {
-      _markers.add(
-        Marker(
-          markerId: MarkerId('ambulance_$_ambulanceId'),
-          position: _ambulanceLocation!,
-          infoWindow: InfoWindow(
-            title: 'Ambulance $_ambulanceId',
-            snippet: 'Current Location',
-          ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-        ),
-      );
-    }
+    if (mounted) {
+      setState(() {
+        _markers.clear();
 
-    if (_destinationLocation != null) {
-      _markers.add(
-        Marker(
-          markerId: const MarkerId('destination'),
-          position: _destinationLocation!,
-          infoWindow: InfoWindow(
-            title: widget.emergencyRequest['destination']?.toString() ?? 'Hospital',
-            snippet: 'Destination',
+        // Only add ambulance marker if custom icon loaded successfully
+        if (_ambulanceIcon != null) {
+          _markers.add(
+            Marker(
+              markerId: const MarkerId('ambulance'),
+              position: _ambulanceLocation!,
+              icon: _ambulanceIcon!, // ✅ Use custom icon ONLY (no fallback)
+              rotation: _currentBearing,
+              anchor: const Offset(0.5, 0.5),
+              flat: true,
+              infoWindow: InfoWindow(
+                title: 'Ambulance $_ambulanceId',
+                snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
+              ),
+            ),
+          );
+          print('✅ Ambulance marker added with custom icon');
+        } else {
+          print('⚠️ Ambulance icon not loaded yet, skipping marker');
+        }
+
+        // ✅ Destination in RED (hospital)
+        _markers.add(
+          Marker(
+            markerId: const MarkerId('destination'),
+            position: _destinationLocation!,
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+            infoWindow: InfoWindow(
+              title: widget.emergencyRequest['destination'] ?? 'Destination',
+              snippet: 'Hospital/Emergency Location',
+            ),
           ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        ),
-      );
+        );
+      });
     }
   }
+
 
   Future<void> _getDirectionsRoute() async {
     if (_ambulanceLocation == null || _destinationLocation == null || _googleApiKey.isEmpty) {
@@ -310,22 +273,23 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-
         if (data['status'] == 'OK' && data['routes'].isNotEmpty) {
           final points = data['routes'][0]['overview_polyline']['points'];
           final decodedPoints = _decodePolyline(points);
 
-          setState(() {
-            _polylines.clear();
-            _polylines.add(
-              Polyline(
-                polylineId: const PolylineId('route'),
-                points: decodedPoints,
-                color: Colors.blue,
-                width: 5,
-              ),
-            );
-          });
+          if (mounted) {
+            setState(() {
+              _polylines.clear();
+              _polylines.add(
+                Polyline(
+                  polylineId: const PolylineId('route'),
+                  points: decodedPoints,
+                  color: Colors.blue,
+                  width: 5,
+                ),
+              );
+            });
+          }
           print('✅ Route added');
         }
       }
@@ -430,16 +394,19 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
           children: const [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('Loading map...'),
+            Text('Loading ambulance tracking...'),
           ],
         ),
       )
           : Stack(
         children: [
+          // ✅ Map with same zoom as ambulance app
           GoogleMap(
             initialCameraPosition: CameraPosition(
               target: _ambulanceLocation ?? const LatLng(13.0827, 80.2707),
-              zoom: 14,
+              zoom: 18.5, // ✅ Same zoom as ambulance app
+              bearing: 0,
+              tilt: 0,
             ),
             onMapCreated: (controller) {
               _mapController = controller;
@@ -454,7 +421,6 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
             trafficEnabled: true,
             mapType: MapType.normal,
           ),
-
           Positioned(
             top: 16,
             left: 16,
@@ -518,25 +484,25 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
                   ),
                   const SizedBox(height: 12),
                   Row(
-                    children: const [
-                      Icon(Icons.circle, color: Colors.blue, size: 12),
-                      SizedBox(width: 8),
-                      Text('Blue: Ambulance (Live)', style: TextStyle(fontSize: 12)),
+                    children: [
+                      Image.asset('assets/icons/amb.png', width: 16, height: 16),
+                      const SizedBox(width: 8),
+                      Text('Ambulance (Live) - ${_currentSpeed.toStringAsFixed(0)} km/h',
+                          style: const TextStyle(fontSize: 12)),
                     ],
                   ),
                   const SizedBox(height: 4),
                   Row(
                     children: const [
-                      Icon(Icons.circle, color: Colors.red, size: 12),
+                      Icon(Icons.local_hospital, color: Colors.red, size: 12),
                       SizedBox(width: 8),
-                      Text('Red: Destination', style: TextStyle(fontSize: 12)),
+                      Text('Hospital Destination', style: TextStyle(fontSize: 12)),
                     ],
                   ),
                 ],
               ),
             ),
           ),
-
           Positioned(
             bottom: 16,
             left: 16,

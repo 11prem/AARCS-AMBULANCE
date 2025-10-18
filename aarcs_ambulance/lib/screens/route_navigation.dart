@@ -350,6 +350,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
     // Update marker position
     _updateAmbulanceMarker();
+    _sendLocationToFirebase();
 
     if (_isNavigating) {
       _updateRouteProgress();
@@ -387,6 +388,53 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
     print('⚠️ Too far from route (${minDistance.toStringAsFixed(1)}m), using GPS');
     return currentLocation; // Too far off route, use raw GPS
+  }
+
+  // Send real-time location updates to Firebase for traffic police tracking
+  Future<void> _sendLocationToFirebase() async {
+    if (_currentPosition == null) return;
+
+    try {
+      // Find the active request ID for this ambulance
+      final requestQuery = await FirebaseDatabase.instanceFor(
+        app: Firebase.app(),
+        databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+      ).ref()
+          .child('emergency_requests')
+          .orderByChild('ambulanceId')
+          .equalTo(widget.ambulanceId)
+          .limitToLast(1)
+          .once();
+
+      if (requestQuery.snapshot.value != null) {
+        final requests = requestQuery.snapshot.value as Map;
+        final requestId = requests.keys.first;
+
+        // Update the request with current location, bearing, and speed
+        await FirebaseDatabase.instanceFor(
+          app: Firebase.app(),
+          databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+        ).ref()
+            .child('emergency_requests')
+            .child(requestId)
+            .update({
+          'liveLocation': {
+            'lat': _currentPosition!.latitude,
+            'lng': _currentPosition!.longitude,
+            'bearing': _currentBearing,
+            'speed': _currentSpeed,
+            'timestamp': ServerValue.timestamp,
+          },
+          'eta': _eta,
+          'distance': _distance,
+          'currentSpeed': _currentSpeed,
+        });
+
+        print('📡 Location sent to Firebase: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
+      }
+    } catch (e) {
+      print('❌ Failed to send location to Firebase: $e');
+    }
   }
 
 
