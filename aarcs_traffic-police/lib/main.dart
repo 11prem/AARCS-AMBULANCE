@@ -7,6 +7,7 @@ import 'firebase_options.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'config.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -168,7 +169,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // Send authentication request to police endpoint
       final response = await http.post(
-        Uri.parse('$backendUrl/authenticate/police'),
+        Uri.parse(Config.policeAuthEndpoint),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'policeId': id,
