@@ -10,11 +10,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="09ab5d6f-3528-4958-99f3-8e70c7455b13" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SETUP.md" beforeDir="false" afterPath="$PROJECT_DIR$/SETUP.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/android/app/src/main/res/xml/network_security_config.xml" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/android/app/src/main/res/xml/network_security_config.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/aarcs_backend/server.js" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_backend/server.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

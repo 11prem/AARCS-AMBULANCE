@@ -4,7 +4,7 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 
 // Initialize Firebase Admin SDK
-const serviceAccount = require('./config/firebase-service-account.json');
+const serviceAccount = require('/etc/secrets/firebase-service-account.json');
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
