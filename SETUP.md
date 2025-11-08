@@ -2,95 +2,46 @@
 
 ## System Overview
 
-AARCS (Advanced Ambulance Response & Control System) consists of:
+AARCS (Automated Ambulance Route Clearance System) consists of:
 - **Ambulance Mobile App** - For ambulance drivers
 - **Traffic Police Mobile App** - For traffic police officers
-- **Backend Authentication Server** - Node.js server with Firebase integration
+- **Backend Authentication Server** - Cloud-hosted Node.js server with Firebase integration
 
 ## Prerequisites
 
 - Flutter SDK (3.9.0 or higher)
-- Node.js (v18 or higher)
 - Android Studio / VS Code
-- Firebase Account Access
-- Ngrok Account (for internet-wide access)
+- Internet connection on mobile devices
+- Firebase Account Access (for developers only)
 
----
+***
 
-## Part 1: Backend Server Setup
+## Part 1: Backend Server (Already Deployed)
 
-### Step 1: Install Dependencies
+### ✅ Server Status
 
-cd aarcs_backend
-npm install
+The AARCS authentication server is **already deployed and running 24/7** on Render cloud platform.
 
+**Server URL:** `https://aarcs-auth-server.onrender.com`
 
-### Step 2: Get Firebase Service Account Key
+### Features:
+- ✅ Always accessible from anywhere with internet
+- ✅ No local server setup required
+- ✅ Automatic SSL/HTTPS security
+- ✅ Free cloud hosting
+- ⚠️ First request after inactivity may take 30-60 seconds (server waking up)
 
-**Required File:** `aarcs_backend/config/firebase-service-account.json`
+### Health Check
 
-1. Go to [Firebase Console](https://console.firebase.google.com)
-2. Select the **AARCS** project (aarcs-2f28b)
-3. Navigate to **Project Settings** (gear icon) → **Service Accounts**
-4. Click **"Generate new private key"**
-5. Download the JSON file
-6. **Important:** Rename it to `firebase-service-account.json`
-7. Place it in `aarcs_backend/config/` folder
+To verify server is running, visit:
+https://aarcs-auth-server.onrender.com/health
 
-**File Structure:**
-aarcs_backend/
-├── config/
-│ └── firebase-service-account.json ← Place here (NOT in Git)
-├── server.js
-└── package.json
+Expected response:json
+{"status":"Server running","timestamp":"..."}
 
+***
 
-### Step 3: Start Backend Server Locally
-
-cd aarcs_backend
-node server.js
-
-You should see:
-🚀 AARCS Authentication Server Started
-📡 Server running on: http://localhost:3000
-🚑 Ambulances: AMB001, AMB002, AMB003
-🚔 Police: POL001, POL002, POL003
-
-**Keep this terminal running.**
-
----
-
-## Part 2: Expose Backend with Ngrok (Internet Access)
-
-### Step 1: Install and Setup Ngrok
-
-1. Download from: https://ngrok.com/download
-2. Install using the Windows installer
-3. Sign up for free account at: https://dashboard.ngrok.com
-4. Get your authtoken from: https://dashboard.ngrok.com/get-started/your-authtoken
-
-### Step 2: Authenticate Ngrok
-
-ngrok config add-authtoken YOUR_AUTHTOKEN_HERE
-
-
-### Step 3: Start Ngrok Tunnel
-
-**Open a NEW terminal** and run:
-
-ngrok http 3000
-
-You'll see output like:
-Forwarding https://abcd-1234-5678-efgh.ngrok-free.app -> http://localhost:3000
-
-
-**Copy the Forwarding URL** (the `https://...ngrok-free.app` part)
-
-**⚠️ IMPORTANT:** Keep this terminal running. Your public URL will change if you restart ngrok.
-
----
-
-## Part 3: Ambulance App Setup
+## Part 2: Ambulance App Setup
 
 ### Step 1: Navigate to App Directory
 
@@ -100,22 +51,17 @@ cd aarcs_ambulance
 
 flutter pub get
 
-### Step 3: Create `.env` File
+### Step 3: Verify Backend URL Configuration
 
-**Required File:** `aarcs_ambulance/.env`
+The app is already configured to use the cloud server. No `.env` file needed.
 
-Create a file named `.env` in the `aarcs_ambulance` folder:
-
-notepad .env
-
-**Content (use YOUR ngrok URL):**
-BACKEND_URL=https://abcd-1234-5678-efgh.ngrok-free.app
-
-Replace `abcd-1234-5678-efgh.ngrok-free.app` with your actual ngrok URL from Part 2, Step 3.
+**Backend URL is hardcoded in code:** `https://aarcs-auth-server.onrender.com`
 
 ### Step 4: Run the App
 
 flutter run
+
+**Note:** First login may take 30-60 seconds if server was sleeping. Subsequent logins will be instant.
 
 ### Step 5: Test Login
 
@@ -125,34 +71,27 @@ flutter run
 | AMB002 | emergency234 |
 | AMB003 | emergency456 |
 
----
+***
 
-## Part 4: Traffic Police App Setup
+## Part 3: Traffic Police App Setup
 
 ### Step 1: Navigate to App Directory
 
-cd aarcs_traffic-police
+cd aarcs_traffic_police_app
 
 ### Step 2: Install Dependencies
 
 flutter pub get
 
-### Step 3: Create `.env` File
+### Step 3: Verify Backend URL Configuration
 
-**Required File:** `aarcs_traffic-police/.env`
-
-Create a file named `.env` in the `aarcs_traffic-police` folder:
-
-notepad .env
-
-**Content (use YOUR ngrok URL):**
-BACKEND_URL=https://abcd-1234-5678-efgh.ngrok-free.app
-
-Use the **same ngrok URL** from Part 2, Step 3.
+The app is already configured to use the cloud server at `https://aarcs-auth-server.onrender.com`
 
 ### Step 4: Run the App
 
 flutter run
+
+**Note:** First login may take 30-60 seconds if server was sleeping. Subsequent logins will be instant.
 
 ### Step 5: Test Login
 
@@ -162,129 +101,120 @@ flutter run
 | POL002 | traffic234 |
 | POL003 | traffic345 |
 
----
+***
 
 ## Project Structure
 
 AARCS-AMBULANCE/
-├── aarcs_ambulance/ # Ambulance mobile app
-│ ├── lib/
-│ │ ├── main.dart # App entry with Firebase auth
-│ │ └── screens/
-│ └── .env # Backend URL (NOT in repo)
+├── aarcs_ambulance/              # Ambulance mobile app
+│   ├── lib/
+│   │   ├── main.dart             # App entry with Firebase auth
+│   │   └── screens/
+│   │       ├── dashboard.dart
+│   │       └── route_navigation.dart
+│   └── pubspec.yaml
 │
-├── aarcs_backend/ # Authentication server
-│ ├── config/
-│ │ └── firebase-service-account.json # Firebase key (NOT in repo)
-│ ├── server.js # Backend server
-│ └── package.json
+├── aarcs_backend/                # Backend server (deployed to Render)
+│   ├── server.js                 # Authentication server
+│   ├── package.json
+│   └── config/
+│       └── firebase-service-account.json  # (Deployed securely)
 │
-└── aarcs_traffic-police/ # Traffic police mobile app
-├── lib/
-│ ├── main.dart # App entry with Firebase auth
-│ └── screens/
-└── .env # Backend URL (NOT in repo)
+└── aarcs_traffic_police_app/     # Traffic police mobile app
+    ├── lib/
+    │   ├── main.dart             # App entry with Firebase auth
+    │   └── screens/
+    └── pubspec.yaml
 
----
+***
 
 ## Running Everything (Quick Start)
 
-You'll need **4 terminals**:
+You only need **2 terminals** (no backend setup needed):
 
-### Terminal 1 - Backend Server
-cd D:\AARCS-AMBULANCE\aarcs_backend
-node server.js
-
-### Terminal 2 - Ngrok Tunnel
-ngrok http 3000
-Copy the ngrok URL and update .env files if changed
-
-### Terminal 3 - Ambulance App
-cd D:\AARCS-AMBULANCE\aarcs_ambulance
+### Terminal 1 - Ambulance App
+cd aarcs_ambulance
 flutter run
 
-### Terminal 4 - Traffic Police App
-cd D:\AARCS-AMBULANCE\aarcs_traffic-police
+### Terminal 2 - Traffic Police App
+cd aarcs_traffic_police_app
 flutter run
 
----
+That's it! The backend server runs automatically in the cloud.
 
-## Important Security Notes
-
-### ⚠️ Never Commit These Files to Git:
-
-- `firebase-service-account.json` - Firebase admin credentials
-- `.env` files - Backend URLs
-- Any file containing passwords or API keys
-
-These files are protected by `.gitignore` and should remain local only.
-
----
+***
 
 ## Network Requirements
 
 ### Both Apps Work From:
 - ✅ Any Wi-Fi network
 - ✅ Mobile data (4G/5G)
-- ✅ Different networks (apps don't need to be on same Wi-Fi)
-- ✅ Anywhere with internet connection
+- ✅ Different networks (apps don't need to be on same network)
+- ✅ Anywhere in the world with internet connection
+- ✅ No VPN or special network configuration required
 
 ### Requirements:
-- Backend server must be running
-- Ngrok tunnel must be active
 - Internet connection on mobile devices
+- Backend server is automatically available 24/7
 
----
+***
 
-## Ngrok Notes
+## Cloud Hosting Details
 
-### Free Tier Features:
-- ✅ Works from anywhere with internet
-- ✅ HTTPS enabled automatically
-- ⚠️ URL changes every time you restart ngrok
-- ⚠️ Session expires after 8 hours
-- ⚠️ Shows ngrok banner page on first visit
+### Render Free Tier Features:
+- ✅ 24/7 server availability
+- ✅ Automatic HTTPS/SSL
+- ✅ Fixed URL (never changes)
+- ✅ Accessible from anywhere
+- ⚠️ Server sleeps after 15 minutes of inactivity
+- ⚠️ Cold start takes 30-60 seconds (first login after sleep)
+- ✅ 750 hours/month runtime (enough for continuous operation)
 
-### When Ngrok URL Changes:
+### Server Wake-Up Behavior:
 
-If you stop and restart ngrok, you'll get a new URL. You must:
+**First login after inactivity:**
+- Takes 30-60 seconds
+- Shows "Connecting to server..." message
+- This is normal and expected
 
-1. Copy the new ngrok URL from terminal
-2. Update **both** `.env` files:
-    - `aarcs_ambulance/.env`
-    - `aarcs_traffic-police/.env`
-3. Hot restart both apps:
-    - Press `r` in Flutter terminal
-    - Or stop and `flutter run` again
+**Subsequent logins:**
+- Instant response (< 1 second)
+- Server stays active for 15 minutes after last request
+
+***
 
 ## Troubleshooting
 
-### Backend won't start
-- ✅ Verify `firebase-service-account.json` is in correct location
-- ✅ Check Firebase project ID matches (aarcs-2f28b)
-- ✅ Run `npm install` to ensure dependencies are installed
+### "TimeoutException" or "Connection Error"
+**Cause:** Server is waking up from sleep (first request after inactivity)
 
-### App shows connection error
-- ✅ Ensure backend server is running
-- ✅ Verify ngrok tunnel is active
-- ✅ Check `.env` file has correct ngrok URL
-- ✅ Restart app after updating `.env`
-- ✅ Check mobile device has internet connection
+**Solution:**
+- ✅ Wait 30-60 seconds and try again
+- ✅ App has 90-second timeout to handle this
+- ✅ Check your internet connection
+- ✅ Verify server health at: `https://aarcs-auth-server.onrender.com/health`
 
-### Firebase Authentication Error
-- ✅ Verify Firebase Authentication is enabled in Console
-- ✅ Ensure Email/Password provider is enabled
-- ✅ Check Firebase service account has correct permissions
-
-### Ngrok session expired
-- ✅ Restart ngrok: `ngrok http 3000`
-- ✅ Copy new URL and update `.env` files
-- ✅ Hot restart both apps
-
-### Wrong credentials accepted
+### "Invalid credentials" error
 - ✅ Verify you're using correct app for credentials
 - ✅ Ambulance credentials (AMB*) only work in ambulance app
 - ✅ Police credentials (POL*) only work in traffic police app
+- ✅ Check for typos in ID or password
+
+### Firebase Authentication Error
+- ✅ Ensure device has internet connection
+- ✅ Check Firebase service is operational
+- ✅ Try restarting the app
+
+### App won't compile
+- ✅ Run `flutter pub get` to install dependencies
+- ✅ Run `flutter clean` then `flutter pub get`
+- ✅ Ensure Flutter SDK is up to date: `flutter upgrade`
+
+### "Server not responding"
+- ✅ Check server status at health endpoint
+- ✅ Verify internet connection on device
+- ✅ Wait 60 seconds for server wake-up
+- ✅ Check Render dashboard for server status
 
 ---
 
@@ -296,39 +226,188 @@ If you stop and restart ngrok, you'll get a new URL. You must:
 - ✅ Ambulance credentials cannot access police app
 - ✅ Police credentials cannot access ambulance app
 - ✅ Token validation on every request
+- ✅ Hardcoded credentials validated server-side
 
 ### Endpoints:
-- Ambulance: `POST /authenticate` or `/authenticate/ambulance`
-- Police: `POST /authenticate/police`
+- **Ambulance:** `POST https://aarcs-auth-server.onrender.com/authenticate/ambulance`
+- **Police:** `POST https://aarcs-auth-server.onrender.com/authenticate/police`
+- **Health:** `GET https://aarcs-auth-server.onrender.com/health`
 
----
+***
+
+## For Developers: Backend Deployment
+
+### Server is Deployed on Render
+
+**Dashboard:** https://dashboard.render.com
+
+**Deployment Details:**
+- **Platform:** Render Free Tier
+- **Repository:** https://github.com/11prem/AARCS-AMBULANCE
+- **Root Directory:** `aarcs_backend`
+- **Build Command:** `npm install`
+- **Start Command:** `node server.js`
+- **Port:** Auto-assigned by Render
+
+### To Update Backend Server:
+
+1. Make changes to `aarcs_backend/server.js`
+2. Commit and push to GitHub:
+
+   git add .
+   git commit -m "Update backend server"
+   git push origin main
+
+3. Render automatically deploys the changes
+4. Check deployment status at Render dashboard
+
+### Environment Configuration:
+
+Firebase service account is configured in Render as a Secret File:
+- **Path:** `/etc/secrets/firebase-service-account.json`
+- **Configured in:** Render Dashboard → Settings → Advanced → Secret Files
+
+***
+
+## Security Notes
+
+### ⚠️ Never Commit These Files to Git:
+
+- `firebase-service-account.json` - Firebase admin credentials
+- Any file containing passwords or API keys
+- `.env` files (if used in future)
+
+These files are protected by `.gitignore` and should remain secure.
+
+### Production Credentials:
+
+The hardcoded credentials (AMB001-003, POL001-003) are for development/demo purposes only. In production:
+- Replace with secure database-backed authentication
+- Implement proper user management
+- Use environment variables for sensitive data
+
+***
 
 ## Team Collaboration
 
-### To Share Firebase Access:
+### For App Developers:
 
-1. Go to Firebase Console → Project Settings → Users and Permissions
-2. Add team member emails with appropriate roles
-3. They can generate their own service account keys
+No backend setup required. Simply:
+1. Clone the repository
+2. Run `flutter pub get`
+3. Run `flutter run`
 
-### To Share Ngrok URL:
+### For Backend Developers:
 
-Simply share the ngrok URL from Terminal 2 with your team. They can use it in their `.env` files.
-
-**⚠️ Security Note:** The ngrok URL is publicly accessible. Only use test credentials in development.
-
----
-
-## Support
-
-For issues or questions:
-- Check troubleshooting section above
-- Review Firebase Console for authentication logs
-- Check ngrok dashboard for traffic logs
-- Create an issue on GitHub repository
+To modify the backend:
+1. Request access to Firebase Console
+2. Request access to Render Dashboard
+3. Clone repository and work in `aarcs_backend/` folder
+4. Test locally with `node server.js` (requires Firebase service account)
+5. Push changes to GitHub for automatic deployment
 
 ---
 
-## License
+## Performance Optimization
 
-This project is for educational/internal use. Ensure compliance with all applicable regulations for emergency services systems.
+### To Avoid Cold Starts:
+
+**Option 1: Use UptimeRobot (Recommended)**
+1. Sign up at [uptimerobot.com](https://uptimerobot.com) (free)
+2. Add monitor:
+   - **URL:** `https://aarcs-auth-server.onrender.com/health`
+   - **Interval:** Every 5 minutes
+3. Server stays warm 24/7
+
+**Option 2: Upgrade Render Plan**
+- Upgrade to paid plan ($7/month) for always-on service
+- No cold starts, instant response
+
+***
+
+## System Architecture
+
+┌─────────────────────┐
+│  Ambulance App      │
+│  (Flutter)          │
+└──────────┬──────────┘
+           │
+           │ HTTPS
+           ▼
+┌──────────────────────────────────────────────┐
+│  AARCS Auth Server                           │
+│  (Render Cloud)                              │
+│  https://aarcs-auth-server.onrender.com      │
+└──────────┬───────────────────────────────────┘
+           │
+           │ Firebase Admin SDK
+           ▼
+┌─────────────────────────────────┐
+│  Firebase Services              │
+│  - Authentication               │
+│  - Firestore Database           │
+│  - Cloud Storage                │
+└─────────────────────────────────┘
+           ▲
+           │ HTTPS
+           │
+┌──────────┴──────────┐
+│  Traffic Police App │
+│  (Flutter)          │
+└─────────────────────┘
+
+***
+
+## Support & Resources
+
+### Documentation:
+- **Firebase:** https://firebase.google.com/docs
+- **Flutter:** https://flutter.dev/docs
+- **Render:** https://render.com/docs
+
+### Monitoring:
+- **Server Health:** https://aarcs-auth-server.onrender.com/health
+- **Render Dashboard:** https://dashboard.render.com
+- **Firebase Console:** https://console.firebase.google.com
+
+### For Issues:
+1. Check troubleshooting section above
+2. Review server logs in Render dashboard
+3. Check Firebase Console for authentication logs
+4. Create an issue on GitHub repository
+
+***
+
+## Quick Reference
+
+### Ambulance Credentials
+AMB001 / emergency123
+AMB002 / emergency234
+AMB003 / emergency456
+
+### Police Credentials
+POL001 / traffic123
+POL002 / traffic234
+POL003 / traffic345
+
+### Server URL
+https://aarcs-auth-server.onrender.com
+
+### Commands
+# Install dependencies
+flutter pub get
+
+# Run ambulance app
+cd aarcs_ambulance && flutter run
+
+# Run police app
+cd aarcs_traffic_police_app && flutter run
+
+# Build APK
+flutter build apk --release
+
+***
+
+**Last Updated:** November 2025  
+**Backend Version:** 1.0.0  
+**Deployment Platform:** Render Cloud Platform
