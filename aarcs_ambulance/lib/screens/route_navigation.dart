@@ -18,7 +18,7 @@ class FirebaseAmbulanceService {
     databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
   ).ref();
 
-  static Future<void> sendRouteRequest({
+  static Future<String?> sendRouteRequest({
     required String ambulanceId,
     required String destinationName,
     required double currentLat,
@@ -29,13 +29,20 @@ class FirebaseAmbulanceService {
     String? distance,
   }) async {
     try {
-      final requestId = DateTime.now().millisecondsSinceEpoch.toString();
+      print('📝 Preparing Firebase write...');
 
-      await _database.child('emergency_requests').child(requestId).set({
+      final requestRef = _database.child('emergency_requests').push();
+      final requestId = requestRef.key;
+
+      print('📝 Generated Request ID: $requestId');
+
+      final requestData = {
         'ambulanceId': ambulanceId,
         'destination': destinationName,
-        'currentLocation': 'Lat: ${currentLat.toStringAsFixed(4)}, Lng: ${currentLng.toStringAsFixed(4)}',
-        'eta': eta ?? 'Calculating...',
+        'currentLocation': 'Lat: ${currentLat.toStringAsFixed(6)}, Lng: ${currentLng.toStringAsFixed(6)}',
+        'status': 'pending',
+        'timestamp': ServerValue.timestamp,
+        'eta': eta ?? 'N/A',
         'distance': distance ?? 'N/A',
         'sourceCoords': {
           'lat': currentLat,
@@ -45,14 +52,22 @@ class FirebaseAmbulanceService {
           'lat': destLat,
           'lng': destLng,
         },
-        'status': 'pending',
-        'timestamp': ServerValue.timestamp,
-      });
+      };
 
-      print('✅ Route request sent to Firebase: $requestId');
+      print('📝 Writing data to Firebase...');
+      print('   Path: emergency_requests/$requestId');
+      print('   Data: $requestData');
+
+      await requestRef.set(requestData);
+
+      print('✅ Firebase write SUCCESS!');
+      print('   Request ID: $requestId');
+
+      return requestId;
     } catch (e) {
-      print('❌ Failed to send route request: $e');
-      rethrow;
+      print('❌ Firebase write FAILED: $e');
+      print('   Error type: ${e.runtimeType}');
+      return null;
     }
   }
 }
@@ -113,6 +128,10 @@ class RouteNavigationScreen extends StatefulWidget {
 }
 
 class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
+  bool _hasCompletedTrip = false;
+  String? _activeRequestId;
+  bool _isCompletingTrip = false;
+
   GoogleMapController? _mapController;
   Position? _currentPosition;
   Set<Polyline> _polylines = {};
@@ -126,7 +145,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   String? _errorMessage;
   BitmapDescriptor? _ambulanceIcon;
   double _currentZoom = 18.5;
-
 
   // Navigation specific variables
   bool _isNavigating = false;
@@ -147,28 +165,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   final String _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
   StreamSubscription<Position>? _positionSubscription;
 
-  Future<void> _loadCustomMarkerIcon({double zoom = 15.0}) async {
-    try {
-      // ✅ UBER-STYLE: Fixed 45px size (professional, compact)
-      double markerSize = 45.0;
-
-      _ambulanceIcon = await BitmapDescriptor.fromAssetImage(
-        ImageConfiguration(
-          size: Size(markerSize, markerSize),
-          devicePixelRatio: 2.5, // High quality on all devices
-        ),
-        'assets/icons/amb.png',
-      );
-      print('✅ Ambulance icon loaded: ${markerSize.toInt()}px');
-    } catch (e) {
-      print('❌ Failed to load ambulance icon: $e');
-      _ambulanceIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
-    }
-  }
-
-
-
-
   @override
   void initState() {
     super.initState();
@@ -181,10 +177,175 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     _positionSubscription?.cancel();
     _mapController?.dispose();
     _routeUpdateTimer?.cancel();
-    _instructionDismissTimer?.cancel(); // ✅ NEW: Cleanup dismiss timer
+    _instructionDismissTimer?.cancel();
     super.dispose();
   }
 
+  // NEW: Complete Trip manually
+  Future<void> _completeTrip() async {
+    if (_isCompletingTrip) return;
+
+    setState(() {
+      _isCompletingTrip = true;
+    });
+
+    try {
+      print('🏁 Manually completing trip...');
+
+      // Find the active request for this ambulance
+      final requestQuery = await FirebaseDatabase.instanceFor(
+        app: Firebase.app(),
+        databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+      ).ref()
+          .child('emergency_requests')
+          .orderByChild('ambulanceId')
+          .equalTo(widget.ambulanceId)
+          .limitToLast(1)
+          .once();
+
+      print('📊 Request query snapshot exists: ${requestQuery.snapshot.exists}');
+      print('📊 Request query value: ${requestQuery.snapshot.value}');
+
+      if (requestQuery.snapshot.value != null) {
+        final requests = requestQuery.snapshot.value as Map;
+        final requestId = requests.keys.first;
+        final requestData = requests[requestId];
+        final currentStatus = requestData['status'];
+
+        print('🔍 Found request: $requestId with status: $currentStatus');
+
+        // Update ANY pending or accepted request (not already completed or cancelled)
+        if (currentStatus == 'pending' || currentStatus == 'accepted') {
+          await FirebaseDatabase.instanceFor(
+            app: Firebase.app(),
+            databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+          ).ref()
+              .child('emergency_requests')
+              .child(requestId)
+              .update({
+            'status': 'completed',
+            'completed_at': ServerValue.timestamp,
+          });
+
+          print('✅ Trip marked as completed: $requestId');
+          print('✅ Updated Firebase with completed status');
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Row(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.white),
+                    SizedBox(width: 8),
+                    Expanded(child: Text('✅ Trip completed successfully!')),
+                  ],
+                ),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 2),
+              ),
+            );
+
+            // Show dialog and navigate back after a delay
+            await Future.delayed(const Duration(milliseconds: 500));
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (context) => AlertDialog(
+                title: const Row(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green, size: 32),
+                    SizedBox(width: 8),
+                    Text('Trip Completed'),
+                  ],
+                ),
+                content: const Text('You have successfully completed this trip. Check the History tab to see your completed trips.'),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop(); // Close dialog
+                      Navigator.of(context).pop(); // Go back to dashboard
+                    },
+                    child: const Text('VIEW HISTORY', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            );
+          }
+        } else if (currentStatus == 'completed') {
+          // Already completed - just show message and go back
+          print('ℹ️ Trip already completed');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('ℹ️ This trip has already been completed'),
+                backgroundColor: Colors.blue,
+              ),
+            );
+            await Future.delayed(const Duration(seconds: 1));
+            Navigator.of(context).pop(); // Go back to dashboard
+          }
+        } else {
+          throw Exception('Cannot complete: Trip is ${currentStatus}');
+        }
+      } else {
+        print('❌ No active request found for ambulance: ${widget.ambulanceId}');
+        throw Exception('No active trip found. Please start a trip first.');
+      }
+    } catch (e) {
+      print('❌ Failed to complete trip: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCompletingTrip = false;
+        });
+      }
+    }
+  }
+
+  // Add this method to check if ambulance reached destination
+  void _checkIfReachedDestination() {
+    if (_currentPosition == null || widget.destinationLat == null || widget.destinationLng == null) {
+      return;
+    }
+
+    final distanceToDestination = Geolocator.distanceBetween(
+      _currentPosition!.latitude,
+      _currentPosition!.longitude,
+      widget.destinationLat!,
+      widget.destinationLng!,
+    );
+
+    // If within 50 meters of destination
+    if (distanceToDestination < 50.0 && !_hasCompletedTrip) {
+      _hasCompletedTrip = true;
+      _completeTrip();
+    }
+  }
+
+  Future<void> _loadCustomMarkerIcon({double zoom = 15.0}) async {
+    try {
+      double markerSize = 45.0;
+      _ambulanceIcon = await BitmapDescriptor.fromAssetImage(
+        ImageConfiguration(
+          size: Size(markerSize, markerSize),
+          devicePixelRatio: 2.5,
+        ),
+        'assets/icons/amb.png',
+      );
+      print('✅ Ambulance icon loaded: ${markerSize.toInt()}px');
+    } catch (e) {
+      print('❌ Failed to load ambulance icon: $e');
+      _ambulanceIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
+    }
+  }
 
   Future<void> _initializeNavigation() async {
     try {
@@ -215,7 +376,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         _errorMessage = 'Initialization failed: ${e.toString()}';
         _isLoading = false;
       });
-      debugPrint('Initialization error: $e');
     }
   }
 
@@ -268,11 +428,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
-
   void _startLocationTracking() {
     const locationSettings = LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 10, // ✅ Changed from 5 to 10 meters (less jittery)
+      distanceFilter: 10,
     );
 
     _positionSubscription = Geolocator.getPositionStream(
@@ -287,7 +446,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     );
   }
 
-
   void _updateLocation(Position newPosition) {
     if (_currentPosition != null) {
       final double distanceInMeters = Geolocator.distanceBetween(
@@ -297,10 +455,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         newPosition.longitude,
       );
 
-      // ✅ FIX 1: Ignore GPS noise - Only update if moved more than 10 meters
       if (distanceInMeters < 10.0) {
-        print('⏸️ Movement too small (${ distanceInMeters.toStringAsFixed(1)}m), ignoring GPS noise');
-        return; // Don't update marker for small movements
+        print('⏸️ Movement too small (${distanceInMeters.toStringAsFixed(1)}m), ignoring GPS noise');
+        return;
       }
 
       final int deltaTime = newPosition.timestamp != null && _currentPosition!.timestamp != null
@@ -311,7 +468,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         final double speedMps = distanceInMeters / (deltaTime / 1000);
         final double speedKmh = speedMps * 3.6;
 
-        // ✅ FIX 2: Only update bearing if actually moving (speed > 2 km/h)
         if (speedKmh > 2.0) {
           _currentBearing = Geolocator.bearingBetween(
             _currentPosition!.latitude,
@@ -327,13 +483,11 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       }
     }
 
-    // ✅ FIX 3: Snap ambulance to route (blue line) instead of raw GPS
     LatLng snappedPosition = _snapToRoute(
         LatLng(newPosition.latitude, newPosition.longitude)
     );
 
     setState(() {
-      // Use snapped position instead of raw GPS
       _currentPosition = Position(
         latitude: snappedPosition.latitude,
         longitude: snappedPosition.longitude,
@@ -348,7 +502,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       );
     });
 
-    // Update marker position
     _updateAmbulanceMarker();
     _sendLocationToFirebase();
 
@@ -356,15 +509,16 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _updateRouteProgress();
       _updateNavigationCamera();
     }
+
+    // Check if reached destination
+    _checkIfReachedDestination();
   }
 
-  // ✅ Snap GPS location to the nearest point on the blue route
   LatLng _snapToRoute(LatLng currentLocation) {
     if (_routePoints.isEmpty) {
-      return currentLocation; // No route yet, use raw GPS
+      return currentLocation;
     }
 
-    // Find nearest point on the route
     double minDistance = double.infinity;
     LatLng nearestPoint = currentLocation;
 
@@ -380,22 +534,19 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       }
     }
 
-    // Only snap if GPS is within 50 meters of route (avoid snapping if way off route)
     if (minDistance < 50.0) {
       print('📍 Snapped to route (${minDistance.toStringAsFixed(1)}m away)');
       return nearestPoint;
     }
 
     print('⚠️ Too far from route (${minDistance.toStringAsFixed(1)}m), using GPS');
-    return currentLocation; // Too far off route, use raw GPS
+    return currentLocation;
   }
 
-  // Send real-time location updates to Firebase for traffic police tracking
   Future<void> _sendLocationToFirebase() async {
     if (_currentPosition == null) return;
 
     try {
-      // Find the active request ID for this ambulance
       final requestQuery = await FirebaseDatabase.instanceFor(
         app: Firebase.app(),
         databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
@@ -410,7 +561,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         final requests = requestQuery.snapshot.value as Map;
         final requestId = requests.keys.first;
 
-        // Update the request with current location, bearing, and speed
+        // Store the active request ID
+        _activeRequestId = requestId;
+
         await FirebaseDatabase.instanceFor(
           app: Firebase.app(),
           databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
@@ -437,8 +590,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
-
-
   void _updateRouteProgress() {
     if (_routePoints.isEmpty || _currentPosition == null) return;
 
@@ -454,7 +605,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
-  // ✅ UPDATED: Changed to solid lines (removed patterns)
   void _updatePolylines() {
     if (_routePoints.isEmpty) return;
 
@@ -478,7 +628,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
           width: 6,
           startCap: Cap.roundCap,
           endCap: Cap.roundCap,
-          // ✅ REMOVED: patterns parameter for solid line
         ),
       };
     });
@@ -507,14 +656,11 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             _nextInstruction = _cleanHtmlTags(_routeSteps[i + 1]['html_instructions']);
           }
         });
-
-        // ✅ NEW: Show card and start auto-dismiss timer
         _startInstructionDismissTimer();
         break;
       }
     }
   }
-
 
   void _updateNavigationCamera() {
     if (_mapController != null && _currentPosition != null) {
@@ -531,10 +677,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
-  // Auto-dismiss instruction card after 5 seconds
   void _startInstructionDismissTimer() {
     _instructionDismissTimer?.cancel();
-
     setState(() {
       _showInstructionCard = true;
     });
@@ -548,13 +692,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     });
   }
 
-
-  // Method to update ambulance marker position in real-time
   void _updateAmbulanceMarker() {
     if (_currentPosition == null) return;
 
     setState(() {
-      // Find and update only the ambulance marker, keep destination marker unchanged
       _markers = _markers.map((marker) {
         if (marker.markerId.value == 'current_location') {
           return marker.copyWith(
@@ -566,7 +707,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       }).toSet();
     });
   }
-
 
   Future<void> _getDirections() async {
     if (_currentPosition == null) {
@@ -596,12 +736,11 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       );
 
       _processDirectionsResponse(directions, destLat, destLng);
-
       print('✅ Directions received successfully');
+
       setState(() {
         _isLoading = false;
       });
-
     } catch (e) {
       debugPrint('getDirections error: $e');
       setState(() {
@@ -617,6 +756,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     );
 
     final response = await http.get(url);
+
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       if (data['status'] == 'OK' && data['results'].isNotEmpty) {
@@ -706,42 +846,42 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
+
       int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
       lat += dlat;
 
       shift = 0;
       result = 0;
+
       do {
         b = encoded.codeUnitAt(index++) - 63;
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
+
       int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
       lng += dlng;
 
       points.add(LatLng(lat / 1E5, lng / 1E5));
     }
+
     return points;
   }
 
-  // ✅ UPDATED: Changed destination marker to cyan (glowing blue like Google Maps)
   void _addMarkersToMap(double destLat, double destLng) {
     setState(() {
       _markers = {
-        // 🚑 Ambulance marker with custom icon and rotation
         Marker(
           markerId: const MarkerId('current_location'),
           position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
           icon: _ambulanceIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-          rotation: _currentBearing, // Rotates ambulance in movement direction
-          anchor: const Offset(0.5, 0.5), // Center rotation point
+          rotation: _currentBearing,
+          anchor: const Offset(0.5, 0.5),
           infoWindow: InfoWindow(
             title: 'Ambulance ${widget.ambulanceId}',
             snippet: 'Current Location',
           ),
         ),
-
-        // 🏥 Destination marker (unchanged)
         Marker(
           markerId: const MarkerId('destination'),
           position: LatLng(destLat, destLng),
@@ -754,7 +894,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       };
     });
   }
-
 
   String _cleanHtmlTags(String htmlString) {
     RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
@@ -802,15 +941,15 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         destLng = coordinates['lng']!;
       }
 
-      print('🚑 Sending route clearance request to Firebase...');
-      print('   - Ambulance: ${widget.ambulanceId}');
+      print('🚑 CREATING FIREBASE REQUEST...');
+      print('   - Ambulance ID: ${widget.ambulanceId}');
       print('   - Destination: ${widget.destination}');
-      print('   - Current: (${_currentPosition!.latitude}, ${_currentPosition!.longitude})');
+      print('   - Current Position: (${_currentPosition!.latitude}, ${_currentPosition!.longitude})');
       print('   - Destination Coords: ($destLat, $destLng)');
       print('   - ETA: $_eta');
       print('   - Distance: $_distance');
 
-      await FirebaseAmbulanceService.sendRouteRequest(
+      final requestId = await FirebaseAmbulanceService.sendRouteRequest(
         ambulanceId: widget.ambulanceId,
         destinationName: widget.destination,
         currentLat: _currentPosition!.latitude,
@@ -820,6 +959,15 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         eta: _eta,
         distance: _distance,
       );
+
+      if (requestId != null) {
+        _activeRequestId = requestId;
+        print('✅ REQUEST CREATED SUCCESSFULLY!');
+        print('   - Request ID: $requestId');
+        print('   - Check Firebase Console now!');
+      } else {
+        print('❌ REQUEST CREATION RETURNED NULL');
+      }
 
       setState(() {
         _isTrafficClearing = false;
@@ -843,7 +991,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         );
       }
     } catch (e) {
-      print('❌ Error sending traffic clearance: $e');
+      print('❌ CRITICAL ERROR IN _clearTraffic: $e');
+      print('   Stack trace: ${StackTrace.current}');
 
       setState(() {
         _isTrafficClearing = false;
@@ -944,13 +1093,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               compassEnabled: true,
               trafficEnabled: true,
               mapType: MapType.normal,
-
-              // ✅ NEW: Track zoom level changes
               onCameraMove: (CameraPosition position) {
                 _currentZoom = position.zoom;
               },
-
-              // ✅ NEW: Reload marker icon when zoom stops
               onCameraIdle: () async {
                 await _loadCustomMarkerIcon(zoom: _currentZoom);
                 _updateAmbulanceMarker();
@@ -958,7 +1103,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             ),
           ),
 
-          // ✅ UPDATED: Fixed info cards - now shows "min" and "KM" only
+          // Info cards
           if (!_isLoading && _currentPosition != null)
             Positioned(
               top: 16,
@@ -974,7 +1119,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             ),
 
           // Navigation instructions card
-          // ✅ NEW: Swipeable Navigation instructions card with auto-dismiss
           if (_isNavigating && _currentInstruction.isNotEmpty && _showInstructionCard)
             Positioned(
               top: 100,
@@ -1013,7 +1157,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                                 ),
                               ),
                             ),
-                            // ✅ NEW: Swipe indicator
                             const Icon(Icons.swipe, color: Colors.white70, size: 20),
                           ],
                         ),
@@ -1027,12 +1170,11 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                             ),
                           ),
                         ],
-                        // ✅ NEW: Auto-dismiss countdown indicator
                         const SizedBox(height: 8),
                         LinearProgressIndicator(
-                          value: 0.2, // Visual indicator (optional)
+                          value: 0.2,
                           backgroundColor: Colors.white24,
-                          valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                          valueColor: const AlwaysStoppedAnimation(Colors.white),
                         ),
                       ],
                     ),
@@ -1041,11 +1183,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               ),
             ),
 
-
           // Speed indicator
           if (!_isLoading)
             Positioned(
-              bottom: 150,
+              bottom: 230,
               left: 16,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1078,9 +1219,45 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               ),
             ),
 
+          // NEW: Complete Trip Button
+          Positioned(
+            bottom: 150,
+            left: 16,
+            right: 16,
+            child: ElevatedButton.icon(
+              onPressed: _isCompletingTrip ? null : _completeTrip,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 8,
+              ),
+              icon: _isCompletingTrip
+                  ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              )
+                  : const Icon(Icons.check_circle, size: 24),
+              label: Text(
+                _isCompletingTrip ? 'COMPLETING...' : 'COMPLETE TRIP',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+
           // Clear traffic button
           Positioned(
-            bottom: 16,
+            bottom: 80,
             left: 16,
             right: 16,
             child: ElevatedButton(

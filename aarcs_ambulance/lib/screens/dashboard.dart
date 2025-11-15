@@ -1,17 +1,17 @@
 // lib/screens/dashboard.dart
+
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'route_navigation.dart';
+import 'history_screen.dart';  // Import history screen
 import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 
-
-
-  class DashboardScreen extends StatefulWidget {
+class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
   final VoidCallback onToggleTheme;
 
@@ -25,7 +25,7 @@ import 'package:firebase_core/firebase_core.dart';
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _destinationController = TextEditingController();
   bool _isButtonPressed = false;
   bool _isLoading = false;
@@ -35,6 +35,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // Suggestions from Google Places Autocomplete
   List<dynamic> _searchSuggestions = [];
+
+  // Tab controller for Dashboard and History tabs
+  late TabController _tabController;
 
   // Put your real API key here (or load from env)
   final String _googleApiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
@@ -92,6 +95,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _refreshLocationAndHospitals();
   }
 
@@ -139,7 +143,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // Enhanced hospital filtering function
-  bool _isValidHospital(String name, List<String> types) {
+  bool _isValidHospital(String name, List<dynamic> types) {
     final String nameLower = name.toLowerCase();
 
     // First, check if it contains any excluded keywords
@@ -256,9 +260,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final String placeId = (place['place_id'] ?? '').toString();
         final String vicinity = (place['vicinity'] ?? '').toString();
         final double rating = (place['rating'] is num) ? (place['rating'] as num).toDouble() : 0.0;
-        final dynamic typesDynamic = place['types'];
-        final List<String> types = [];
 
+        final dynamic typesDynamic = place['types'];
+        final List<dynamic> types = [];
         if (typesDynamic is List) {
           for (var t in typesDynamic) {
             if (t != null) types.add(t.toString().toLowerCase());
@@ -434,7 +438,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       print('🏥 Destination: $hospitalName');
       print('🏥 Coordinates: ${hospital['lat']}, ${hospital['lng']}');
 
-      // ✅ REMOVED: Firebase call - only navigate
       // Navigate to route screen
       Navigator.push(
         context,
@@ -458,9 +461,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
   }
-
-
-
 
   void _openRouteScreenFromInput() async {
     final text = _destinationController.text.trim();
@@ -491,7 +491,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
-      // ✅ REMOVED: Firebase call - just navigate
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -507,7 +506,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return;
     }
 
-    // ✅ REMOVED: Firebase geocoding and sending - just navigate
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -521,9 +519,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
-
-
-
 
   // UPDATED GRADIENT CARD WITH ACCURATE OPENING STATUS
   Widget _buildHospitalCard(Map<String, dynamic> hospital) {
@@ -691,170 +686,207 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildDashboardTab() {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Destination input with enhanced autocomplete
+          TextField(
+            controller: _destinationController,
+            onChanged: (value) {
+              if (_debounce?.isActive ?? false) _debounce!.cancel();
+              _debounce = Timer(const Duration(milliseconds: 500), () {
+                _fetchSearchSuggestions(value);
+              });
+            },
+            decoration: InputDecoration(
+              hintText: "Enter hospital destination",
+              prefixIcon: const Icon(Icons.search, color: Colors.grey),
+              contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+
+          // Search suggestions dropdown
+          if (_searchSuggestions.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: 4),
+              constraints: const BoxConstraints(maxHeight: 200),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+              ),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _searchSuggestions.length,
+                itemBuilder: (context, index) {
+                  final suggestion = _searchSuggestions[index];
+                  final description = suggestion['description'] ?? '';
+                  return ListTile(
+                    title: Text(
+                      description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () async {
+                      _destinationController.text = description;
+                      setState(() => _searchSuggestions = []);
+
+                      final placeId = suggestion['place_id'];
+                      final detailsUrl = Uri.parse(
+                        'https://maps.googleapis.com/maps/api/place/details/json'
+                            '?place_id=$placeId&key=$_googleApiKey',
+                      );
+
+                      final detailsResp = await http.get(detailsUrl);
+                      if (detailsResp.statusCode == 200) {
+                        final detailsData = json.decode(detailsResp.body);
+                        final loc = detailsData['result']['geometry']['location'];
+                        final double lat = (loc['lat'] as num).toDouble();
+                        final double lng = (loc['lng'] as num).toDouble();
+
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => RouteNavigationScreen(
+                              ambulanceId: widget.ambulanceId,
+                              destination: description,
+                              destinationLat: lat,
+                              destinationLng: lng,
+                              onToggleTheme: widget.onToggleTheme,
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                  );
+                },
+              ),
+            ),
+
+          const SizedBox(height: 12),
+
+          // Start Trip button
+          GestureDetector(
+            onTapDown: (_) => setState(() => _isButtonPressed = true),
+            onTapUp: (_) {
+              Future.delayed(const Duration(milliseconds: 120), () {
+                setState(() => _isButtonPressed = false);
+                _openRouteScreenFromInput();
+              });
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              height: 48,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: _isButtonPressed ? Colors.red.shade700 : Colors.red,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              alignment: Alignment.center,
+              child: const Text('Start Trip', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
+          // Nearby Hospitals header
+          Row(
+            children: [
+              const Text('Nearby Hospitals', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Refresh nearby hospitals',
+                icon: const Icon(Icons.refresh, color: Colors.red),
+                onPressed: _refreshLocationAndHospitals,
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 6),
+
+          // Hospital list with Expanded to fill remaining space
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : nearbyHospitals.isEmpty
+                ? const Center(child: Text('No emergency hospitals found nearby', style: TextStyle(color: Colors.grey)))
+                : ListView.builder(
+              padding: EdgeInsets.zero,
+              itemCount: nearbyHospitals.length,
+              itemBuilder: (context, index) {
+                final hospital = nearbyHospitals[index];
+                return _buildHospitalCard(hospital);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header with ambulance ID and theme toggle
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.local_shipping_outlined, color: Colors.red),
-                      const SizedBox(width: 8),
-                      Text(widget.ambulanceId, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  IconButton(
-                    icon: Icon(isDark ? Icons.wb_sunny : Icons.nights_stay, color: Colors.red),
-                    onPressed: widget.onToggleTheme,
-                  ),
-                ],
+      appBar: AppBar(
+        backgroundColor: Colors.red,
+        elevation: 0,
+        title: Row(
+          children: [
+            const Icon(Icons.local_shipping_outlined, color: Colors.white),
+            const SizedBox(width: 8),
+            Text(
+              widget.ambulanceId,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
               ),
-              const SizedBox(height: 12),
-
-              // Destination input with enhanced autocomplete
-              TextField(
-                controller: _destinationController,
-                onChanged: (value) {
-                  if (_debounce?.isActive ?? false) _debounce!.cancel();
-                  _debounce = Timer(const Duration(milliseconds: 500), () {
-                    _fetchSearchSuggestions(value);
-                  });
-                },
-                decoration: InputDecoration(
-                  hintText: "Enter hospital destination",
-                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-              ),
-
-              // Search suggestions dropdown
-              if (_searchSuggestions.isNotEmpty)
-                Container(
-                  margin: const EdgeInsets.only(top: 4),
-                  constraints: const BoxConstraints(maxHeight: 200),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
-                  ),
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: _searchSuggestions.length,
-                    itemBuilder: (context, index) {
-                      final suggestion = _searchSuggestions[index];
-                      final description = suggestion['description'] ?? '';
-
-                      return ListTile(
-                        title: Text(
-                          description,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        onTap: () async {
-                          _destinationController.text = description;
-                          setState(() => _searchSuggestions = []);
-
-                          final placeId = suggestion['place_id'];
-                          final detailsUrl = Uri.parse(
-                            'https://maps.googleapis.com/maps/api/place/details/json'
-                                '?place_id=$placeId&key=$_googleApiKey',
-                          );
-
-                          final detailsResp = await http.get(detailsUrl);
-                          if (detailsResp.statusCode == 200) {
-                            final detailsData = json.decode(detailsResp.body);
-                            final loc = detailsData['result']['geometry']['location'];
-                            final double lat = (loc['lat'] as num).toDouble();
-                            final double lng = (loc['lng'] as num).toDouble();
-
-                            // ✅ REMOVED: Firebase call - just navigate directly
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => RouteNavigationScreen(
-                                  ambulanceId: widget.ambulanceId,
-                                  destination: description,
-                                  destinationLat: lat,
-                                  destinationLng: lng,
-                                  onToggleTheme: widget.onToggleTheme,
-                                ),
-                              ),
-                            );
-                          }
-                        },
-
-
-                      );
-                    },
-                  ),
-                ),
-              const SizedBox(height: 12),
-
-              // Start Trip button
-              GestureDetector(
-                onTapDown: (_) => setState(() => _isButtonPressed = true),
-                onTapUp: (_) {
-                  Future.delayed(const Duration(milliseconds: 120), () {
-                    setState(() => _isButtonPressed = false);
-                    _openRouteScreenFromInput();
-                  });
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 120),
-                  height: 48,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: _isButtonPressed ? Colors.red.shade700 : Colors.red,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  alignment: Alignment.center,
-                  child: const Text('Start Trip', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                ),
-              ),
-              const SizedBox(height: 18),
-
-              // Nearby Hospitals header
-              Row(
-                children: [
-                  const Text('Nearby Hospitals', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: 'Refresh nearby hospitals',
-                    icon: const Icon(Icons.refresh, color: Colors.red),
-                    onPressed: _refreshLocationAndHospitals,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-
-              // Hospital list with Expanded to fill remaining space
-              Expanded(
-                child: _isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : nearbyHospitals.isEmpty
-                    ? const Center(child: Text('No emergency hospitals found nearby', style: TextStyle(color: Colors.grey)))
-                    : ListView.builder(
-                  padding: EdgeInsets.zero, // Remove default padding
-                  itemCount: nearbyHospitals.length,
-                  itemBuilder: (context, index) {
-                    final hospital = nearbyHospitals[index];
-                    return _buildHospitalCard(hospital);
-                  },
-                ),
-              ),
-            ],
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(isDark ? Icons.wb_sunny : Icons.nights_stay, color: Colors.white),
+            onPressed: widget.onToggleTheme,
           ),
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.white,
+          indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+          tabs: const [
+            Tab(
+              icon: Icon(Icons.dashboard),
+              text: 'Dashboard',
+            ),
+            Tab(
+              icon: Icon(Icons.history),
+              text: 'History',
+            ),
+          ],
+        ),
+      ),
+      body: SafeArea(
+        child: TabBarView(
+          controller: _tabController,
+          children: [
+            _buildDashboardTab(),
+            HistoryScreen(
+              ambulanceId: widget.ambulanceId, // ✅ THIS IS THE CRITICAL LINE
+              showAppBar: false,
+            ),
+          ],
         ),
       ),
     );
@@ -864,6 +896,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void dispose() {
     _debounce?.cancel();
     _destinationController.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 }
