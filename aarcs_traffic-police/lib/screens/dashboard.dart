@@ -3,6 +3,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:math';
 import 'dart:async';
 import 'emergency_response_screen.dart';
+import 'history_screen.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 
@@ -73,6 +74,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
 
   void _listenToEmergencyRequests() {
     print('🚓 Traffic Police: Starting to listen for emergency requests...');
+
     _requestSubscription = FirebasePoliceService.listenToEmergencyRequests()
         .listen((DatabaseEvent event) {
       print('🚓 Traffic Police: Firebase event received!');
@@ -81,12 +83,12 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
 
       if (event.snapshot.exists && mounted) {
         print('🚓 Raw data: ${event.snapshot.value}');
-        final requests = Map<dynamic, dynamic>.from(
+
+        final requests = Map<String, dynamic>.from(
             event.snapshot.value as Map);
         print('🚓 Number of requests: ${requests.length}');
 
         final pendingRequests = <String, Map<String, dynamic>>{};
-
         requests.forEach((key, value) {
           final requestData = Map<String, dynamic>.from(value);
           final status = requestData['status']?.toString() ?? '';
@@ -128,6 +130,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
             final sourceCoords = requestData['sourceCoords'] is Map
                 ? Map<String, dynamic>.from(requestData['sourceCoords'])
                 : null;
+
             final destCoords = requestData['destCoords'] is Map
                 ? Map<String, dynamic>.from(requestData['destCoords'])
                 : null;
@@ -200,7 +203,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
               children: [
                 _buildDashboardTab(),
                 _buildHistoryTab(),
-                _buildProfileTab(),
+                _buildProfileTab(),  // ✅ FIXED: Changed from buildProfileTab()
               ],
             ),
           ),
@@ -256,15 +259,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         Padding(
           padding: const EdgeInsets.only(right: 16, top: 8),
           child: Text(
-            '${DateTime
-                .now()
-                .hour
-                .toString()
-                .padLeft(2, '0')}:${DateTime
-                .now()
-                .minute
-                .toString()
-                .padLeft(2, '0')}',
+            '${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
             style: const TextStyle(
               color: Colors.white70,
               fontSize: 14,
@@ -626,15 +621,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           ),
           const SizedBox(height: 12),
           Text(
-            'Last updated: ${DateTime
-                .now()
-                .hour
-                .toString()
-                .padLeft(2, '0')}:${DateTime
-                .now()
-                .minute
-                .toString()
-                .padLeft(2, '0')}',
+            'Last updated: ${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
             style: TextStyle(
               fontSize: 12,
               color: Colors.grey[500],
@@ -646,36 +633,14 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
   }
 
   Widget _buildHistoryTab() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.history,
-            size: 64,
-            color: Colors.grey[400],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'History',
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.grey[600],
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Your recent activities will appear here',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[500],
-            ),
-          ),
-        ],
-      ),
+    // ✅ FIXED: Pass null for ambulanceId to show ALL trips for traffic police
+    return const HistoryScreen(
+      ambulanceId: null,
+      showAppBar: false,
     );
   }
 
+  // ✅ ADDED: Missing _buildProfileTab method
   Widget _buildProfileTab() {
     return Center(
       child: Column(
@@ -712,6 +677,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     );
   }
 
+  // ✅ ADDED: Missing _navigateToEmergencyResponse method
   void _navigateToEmergencyResponse() async {
     if (currentEmergencyRequest != null && currentRequestId != null) {
       try {
@@ -755,11 +721,9 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
             ),
           );
         }
-
       } catch (e, stackTrace) {
         print('❌ Error navigating to emergency response: $e');
         print('Stack trace: $stackTrace');
-
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -773,7 +737,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
       print('⚠️ No emergency request data available');
       print('currentEmergencyRequest: $currentEmergencyRequest');
       print('currentRequestId: $currentRequestId');
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

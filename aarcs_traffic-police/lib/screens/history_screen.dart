@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:intl/intl.dart';
 
 class HistoryScreen extends StatefulWidget {
   final bool showAppBar;
+  final String? ambulanceId;  // ✅ ADDED: ambulanceId parameter
 
-  const HistoryScreen({Key? key, this.showAppBar = true}) : super(key: key);
+  const HistoryScreen({
+    Key? key,
+    this.showAppBar = true,
+    this.ambulanceId,  // ✅ ADDED: Make it nullable for traffic police
+  }) : super(key: key);
 
   @override
   _HistoryScreenState createState() => _HistoryScreenState();
@@ -18,7 +22,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
   ).ref();
 
-  List<Map<String, dynamic>> _historyItems = [];
+  List<Map<dynamic, dynamic>> _historyItems = [];
   bool _isLoading = true;
 
   @override
@@ -33,46 +37,76 @@ class _HistoryScreenState extends State<HistoryScreen> {
         _isLoading = true;
       });
 
-      // Get ALL emergency requests
+      print('🔍 Querying history for ambulance: ${widget.ambulanceId}');
+
       final snapshot = await _database
           .child('emergency_requests')
           .get();
 
-      if (snapshot.exists) {
-        // 👇 ADD THE DEBUG CODE HERE 👇
-        print('📊 History: Snapshot exists');
-        print('📊 Raw data: ${snapshot.value}');
-        final requests = Map<String, dynamic>.from(snapshot.value as Map);
-        print('📊 Total requests: ${requests.length}');
-        // 👆 END OF DEBUG CODE 👆
+      print('📊 Snapshot exists: ${snapshot.exists}');
+      print('📊 Raw data: ${snapshot.value}');
 
-        List<Map<String, dynamic>> historyList = [];
+      if (snapshot.exists) {
+        final requests = Map<dynamic, dynamic>.from(snapshot.value as Map);
+        print('📦 Total requests in database: ${requests.length}');
+
+        List<Map<dynamic, dynamic>> historyList = [];
 
         requests.forEach((key, value) {
-          final requestData = Map<String, dynamic>.from(value);
+          final requestData = Map<dynamic, dynamic>.from(value);
           final status = requestData['status']?.toString() ?? '';
+          final reqAmbulanceId = requestData['ambulanceId']?.toString() ?? '';
 
-          // Filter for accepted/completed/cancelled
-          if (status == 'accepted' || status == 'completed' || status == 'cancelled') {
+          print('🔍 Checking request: $key');
+          print('   - Ambulance ID: $reqAmbulanceId');
+          print('   - Status: $status');
+
+          // ✅ UPDATED LOGIC: If ambulanceId is null, show all trips (traffic police view)
+          bool shouldInclude = false;
+
+          if (widget.ambulanceId == null) {
+            // Traffic police: show all accepted/completed/cancelled trips
+            shouldInclude = (status == 'accepted' ||
+                status == 'completed' ||
+                status == 'cancelled');
+          } else {
+            // Ambulance: show only trips for this specific ambulance
+            shouldInclude = (reqAmbulanceId == widget.ambulanceId &&
+                (status == 'accepted' ||
+                    status == 'completed' ||
+                    status == 'cancelled'));
+          }
+
+          if (shouldInclude) {
+            final sourceCoords = requestData['sourceCoords'];
+            final destCoords = requestData['destCoords'];
+
             historyList.add({
               'requestId': key,
               'ambulanceId': requestData['ambulanceId'] ?? 'Unknown',
               'currentLocation': requestData['currentLocation'] ?? 'Unknown',
-              'destination': requestData['destination'] ?? 'Unknown',
+              'destination': requestData['destination'] ?? 'Unknown Hospital',
               'status': status,
               'timestamp': requestData['timestamp'] ?? 0,
               'accepted_at': requestData['accepted_at'] ?? 0,
               'completed_at': requestData['completed_at'] ?? 0,
               'eta': requestData['eta'] ?? 'N/A',
               'distance': requestData['distance'] ?? 'N/A',
+              'sourceLat': sourceCoords != null ? sourceCoords['lat'] : 0.0,
+              'sourceLng': sourceCoords != null ? sourceCoords['lng'] : 0.0,
+              'destLat': destCoords != null ? destCoords['lat'] : 0.0,
+              'destLng': destCoords != null ? destCoords['lng'] : 0.0,
+              'trafficClearanceRequested': status == 'accepted' || status == 'completed',
             });
           }
         });
 
+        print('📋 Total matching history items: ${historyList.length}');
+
         // Sort by timestamp (newest first)
         historyList.sort((a, b) {
-          final aTime = a['accepted_at'] ?? a['timestamp'] ?? 0;
-          final bTime = b['accepted_at'] ?? b['timestamp'] ?? 0;
+          final aTime = a['timestamp'] ?? 0;
+          final bTime = b['timestamp'] ?? 0;
           return (bTime as num).compareTo(aTime as num);
         });
 
@@ -81,42 +115,46 @@ class _HistoryScreenState extends State<HistoryScreen> {
           _isLoading = false;
         });
       } else {
-        // 👇 ALSO ADD DEBUG HERE 👇
         print('📊 History: No snapshot found');
-        // 👆 END OF DEBUG CODE 👆
-
         setState(() {
           _historyItems = [];
           _isLoading = false;
         });
       }
     } catch (e) {
-      print('Error loading history: $e');
+      print('❌ Error loading history: $e');
       setState(() {
         _isLoading = false;
       });
     }
   }
 
+  // Custom date formatting without intl package
   String _formatTimestamp(dynamic timestamp) {
     if (timestamp == null || timestamp == 0) return 'N/A';
     try {
       final date = DateTime.fromMillisecondsSinceEpoch(timestamp as int);
-      return DateFormat('MMM dd, yyyy HH:mm').format(date);
+      final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      final month = months[date.month - 1];
+      final day = date.day.toString().padLeft(2, '0');
+      final year = date.year;
+      final hour = date.hour.toString().padLeft(2, '0');
+      final minute = date.minute.toString().padLeft(2, '0');
+      return '$month $day, $year $hour:$minute';
     } catch (e) {
       return 'Invalid date';
     }
   }
 
-  String _calculateDuration(dynamic acceptedAt, dynamic completedAt) {
-    if (acceptedAt == null || acceptedAt == 0 || completedAt == null || completedAt == 0) {
+  String _calculateDuration(dynamic startTime, dynamic completedTime) {
+    if (startTime == null || startTime == 0 || completedTime == null || completedTime == 0) {
       return 'N/A';
     }
 
     try {
-      final accepted = DateTime.fromMillisecondsSinceEpoch(acceptedAt as int);
-      final completed = DateTime.fromMillisecondsSinceEpoch(completedAt as int);
-      final duration = completed.difference(accepted);
+      final start = DateTime.fromMillisecondsSinceEpoch(startTime as int);
+      final completed = DateTime.fromMillisecondsSinceEpoch(completedTime as int);
+      final duration = completed.difference(start);
 
       final hours = duration.inHours;
       final minutes = duration.inMinutes % 60;
@@ -159,12 +197,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // If showAppBar is false, return just the body without Scaffold
     if (!widget.showAppBar) {
       return _buildBody();
     }
 
-    // Otherwise, return full Scaffold with AppBar
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
@@ -177,7 +213,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           },
         ),
         title: const Text(
-          'Clearance History',
+          'Trip History',
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,
@@ -199,7 +235,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (_isLoading) {
       return const Center(
         child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1976D2)),
+          valueColor: AlwaysStoppedAnimation(Color(0xFF1976D2)),
         ),
       );
     }
@@ -232,7 +268,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'No History Yet',
+            'No Trip History Yet',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
@@ -241,7 +277,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Accepted requests will appear here',
+            'Completed trips will appear here',
             style: TextStyle(
               fontSize: 14,
               color: Colors.grey[500],
@@ -252,10 +288,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildHistoryCard(Map<String, dynamic> item) {
+  Widget _buildHistoryCard(Map<dynamic, dynamic> item) {
     final status = item['status']?.toString() ?? 'unknown';
     final statusColor = _getStatusColor(status);
-    final duration = _calculateDuration(item['accepted_at'], item['completed_at']);
+    final duration = _calculateDuration(item['timestamp'], item['completed_at']);
+    final trafficRequested = item['trafficClearanceRequested'] ?? false;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -299,16 +336,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        item['ambulanceId'] ?? 'Unknown',
+                        'Ambulance: ${item['ambulanceId']}',
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
                           color: Colors.black87,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Request ID: ${item['requestId'].substring(0, 8)}...',
+                        'Trip ID: ${item['requestId'].substring(0, 8)}...',
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey[600],
@@ -338,34 +377,39 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ],
             ),
           ),
+
           // Details Section
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                // Locations
+                // Starting Location
                 _buildDetailRow(
-                  Icons.location_on,
-                  'From',
-                  item['currentLocation'] ?? 'Unknown',
+                  Icons.my_location,
+                  'Starting Location',
+                  '${item['currentLocation']}\nCoords: (${(item['sourceLat'] as num).toStringAsFixed(4)}, ${(item['sourceLng'] as num).toStringAsFixed(4)})',
                   Colors.blue,
                 ),
                 const SizedBox(height: 12),
+
+                // Hospital Destination
                 _buildDetailRow(
                   Icons.local_hospital,
-                  'To',
+                  'Hospital Destination',
                   item['destination'] ?? 'Unknown',
                   Colors.red,
                 ),
+
                 const Divider(height: 24),
+
                 // Timestamps
                 Row(
                   children: [
                     Expanded(
                       child: _buildInfoChip(
-                        'Accepted',
-                        _formatTimestamp(item['accepted_at']),
-                        Icons.check_circle_outline,
+                        'Trip Started',
+                        _formatTimestamp(item['timestamp']),
+                        Icons.play_circle_outline,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -378,13 +422,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ),
                   ],
                 ),
+
                 const SizedBox(height: 12),
+
                 // Duration and Distance
                 Row(
                   children: [
                     Expanded(
                       child: _buildInfoChip(
-                        'Duration',
+                        'Total Duration',
                         duration,
                         Icons.timer,
                       ),
@@ -398,6 +444,41 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ),
                     ),
                   ],
+                ),
+
+                const SizedBox(height: 12),
+
+                // Traffic clearance
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: trafficRequested ? Colors.green[50] : Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: trafficRequested ? Colors.green : Colors.grey,
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        trafficRequested ? Icons.check_circle : Icons.cancel,
+                        color: trafficRequested ? Colors.green : Colors.grey,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Traffic Clearance: ${trafficRequested ? "REQUESTED" : "NOT REQUESTED"}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: trafficRequested ? Colors.green[800] : Colors.grey[700],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
