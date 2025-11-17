@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // ✅ ADDED: For clipboard
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 class HistoryScreen extends StatefulWidget {
   final bool showAppBar;
-  final String? ambulanceId;  // ✅ ADDED: ambulanceId parameter
+  final String? ambulanceId;
 
   const HistoryScreen({
     Key? key,
     this.showAppBar = true,
-    this.ambulanceId,  // ✅ ADDED: Make it nullable for traffic police
+    this.ambulanceId,
   }) : super(key: key);
 
   @override
@@ -22,7 +23,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
   ).ref();
 
-  List<Map<dynamic, dynamic>> _historyItems = [];
+  List<Map<String, dynamic>> _historyItems = [];
   bool _isLoading = true;
 
   @override
@@ -47,13 +48,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
       print('📊 Raw data: ${snapshot.value}');
 
       if (snapshot.exists) {
-        final requests = Map<dynamic, dynamic>.from(snapshot.value as Map);
+        final requests = Map<String, dynamic>.from(snapshot.value as Map);
         print('📦 Total requests in database: ${requests.length}');
 
-        List<Map<dynamic, dynamic>> historyList = [];
+        List<Map<String, dynamic>> historyList = [];
 
         requests.forEach((key, value) {
-          final requestData = Map<dynamic, dynamic>.from(value);
+          final requestData = Map<String, dynamic>.from(value);
           final status = requestData['status']?.toString() ?? '';
           final reqAmbulanceId = requestData['ambulanceId']?.toString() ?? '';
 
@@ -61,16 +62,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
           print('   - Ambulance ID: $reqAmbulanceId');
           print('   - Status: $status');
 
-          // ✅ UPDATED LOGIC: If ambulanceId is null, show all trips (traffic police view)
           bool shouldInclude = false;
-
           if (widget.ambulanceId == null) {
-            // Traffic police: show all accepted/completed/cancelled trips
             shouldInclude = (status == 'accepted' ||
                 status == 'completed' ||
                 status == 'cancelled');
           } else {
-            // Ambulance: show only trips for this specific ambulance
             shouldInclude = (reqAmbulanceId == widget.ambulanceId &&
                 (status == 'accepted' ||
                     status == 'completed' ||
@@ -103,7 +100,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
         print('📋 Total matching history items: ${historyList.length}');
 
-        // Sort by timestamp (newest first)
         historyList.sort((a, b) {
           final aTime = a['timestamp'] ?? 0;
           final bTime = b['timestamp'] ?? 0;
@@ -129,7 +125,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
-  // Custom date formatting without intl package
   String _formatTimestamp(dynamic timestamp) {
     if (timestamp == null || timestamp == 0) return 'N/A';
     try {
@@ -155,7 +150,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
       final start = DateTime.fromMillisecondsSinceEpoch(startTime as int);
       final completed = DateTime.fromMillisecondsSinceEpoch(completedTime as int);
       final duration = completed.difference(start);
-
       final hours = duration.inHours;
       final minutes = duration.inMinutes % 60;
 
@@ -193,6 +187,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
       default:
         return Icons.info;
     }
+  }
+
+  // ✅ ADDED: Copy to clipboard function
+  void _copyToClipboard(String text, String label) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$label copied to clipboard'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -235,7 +241,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (_isLoading) {
       return const Center(
         child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation(Color(0xFF1976D2)),
+          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1976D2)),
         ),
       );
     }
@@ -288,11 +294,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildHistoryCard(Map<dynamic, dynamic> item) {
+  Widget _buildHistoryCard(Map<String, dynamic> item) {
     final status = item['status']?.toString() ?? 'unknown';
     final statusColor = _getStatusColor(status);
     final duration = _calculateDuration(item['timestamp'], item['completed_at']);
     final trafficRequested = item['trafficClearanceRequested'] ?? false;
+    final tripId = item['requestId'] ?? 'Unknown'; // ✅ ADDED: Full trip ID
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -346,11 +353,28 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        'Trip ID: ${item['requestId'].substring(0, 8)}...',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
+                      // ✅ UPDATED: Full Trip ID with copy functionality
+                      GestureDetector(
+                        onTap: () => _copyToClipboard(tripId, 'Trip ID'),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: SelectableText(
+                                'Trip ID: $tripId',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey[600],
+                                  fontFamily: 'monospace',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.copy,
+                              size: 14,
+                              color: Colors.grey[600],
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -383,11 +407,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                // Starting Location
+                // ✅ UPDATED: Starting Location with landmark only (no coordinates)
                 _buildDetailRow(
                   Icons.my_location,
                   'Starting Location',
-                  '${item['currentLocation']}\nCoords: (${(item['sourceLat'] as num).toStringAsFixed(4)}, ${(item['sourceLng'] as num).toStringAsFixed(4)})',
+                  item['currentLocation'] ?? 'Unknown',
                   Colors.blue,
                 ),
                 const SizedBox(height: 12),

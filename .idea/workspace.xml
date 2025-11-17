@@ -10,14 +10,13 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="09ab5d6f-3528-4958-99f3-8e70c7455b13" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_SDK.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Dart_SDK.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/lib/main.dart" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/lib/main.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/dashboard.dart" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/dashboard.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/history_screen.dart" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/history_screen.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/route_navigation.dart" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/lib/screens/route_navigation.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/pubspec.lock" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/pubspec.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/aarcs_ambulance/pubspec.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/aarcs_ambulance/pubspec.yaml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -44,12 +43,12 @@
     &quot;assignee&quot;: &quot;11prem&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/11prem/AARCS-AMBULANCE.git",
-    "accountId": "b98b09ff-b0ec-4785-95b5-0a7691ef9a70"
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/11prem/AARCS-AMBULANCE.git&quot;,
+    &quot;accountId&quot;: &quot;b98b09ff-b0ec-4785-95b5-0a7691ef9a70&quot;
   }
-}]]></component>
+}</component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 0
 }</component>

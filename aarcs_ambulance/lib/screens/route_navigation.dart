@@ -10,6 +10,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:http/http.dart' as http;
+import 'package:geocoding/geocoding.dart';
 import '../models/priority_model.dart';
 
 // Firebase Service for Ambulance
@@ -19,6 +20,7 @@ class FirebaseAmbulanceService {
     databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
   ).ref();
 
+  // ✅ UPDATED: Send route request with landmark information
   static Future<String?> sendRouteRequest({
     required String ambulanceId,
     required String destinationName,
@@ -29,9 +31,14 @@ class FirebaseAmbulanceService {
     String? eta,
     String? distance,
     required EmergencyPriority priority,
+    required String apiKey, // ✅ ADDED: API key for Places lookup
   }) async {
     try {
       print('📝 Preparing Firebase write with priority: ${priority.index}...');
+
+      // ✅ NEW: Convert current coordinates to landmark
+      String currentLocationLandmark = await _getLocationLandmark(currentLat, currentLng, apiKey);
+
       final requestRef = _database.child('emergency_requests').push();
       final requestId = requestRef.key;
       print('📝 Generated Request ID: $requestId');
@@ -39,7 +46,7 @@ class FirebaseAmbulanceService {
       final requestData = {
         'ambulanceId': ambulanceId,
         'destination': destinationName,
-        'currentLocation': 'Lat: ${currentLat.toStringAsFixed(6)}, Lng: ${currentLng.toStringAsFixed(6)}',
+        'currentLocation': currentLocationLandmark, // ✅ CHANGED: Use landmark instead of coordinates
         'status': 'pending',
         'timestamp': ServerValue.timestamp,
         'eta': eta ?? 'N/A',
@@ -58,19 +65,74 @@ class FirebaseAmbulanceService {
 
       print('📝 Writing data to Firebase...');
       print('   Path: emergency_requests/$requestId');
+      print('   Current Location: $currentLocationLandmark');
       print('   Data: $requestData');
 
       await requestRef.set(requestData);
-
       print('✅ Firebase write SUCCESS!');
       print('   Request ID: $requestId');
-
       return requestId;
     } catch (e) {
       print('❌ Firebase write FAILED: $e');
       print('   Error type: ${e.runtimeType}');
       return null;
     }
+  }
+
+  // ✅ NEW: Get landmark from coordinates
+  static Future<String> _getLocationLandmark(double lat, double lng, String apiKey) async {
+    try {
+      // Try Google Places API first for nearby landmarks
+      final placesUrl = Uri.parse(
+          'https://maps.googleapis.com/maps/api/place/nearbysearch/json?'
+              'location=$lat,$lng&'
+              'radius=100&'
+              'type=point_of_interest|establishment|transit_station|bus_station|hospital|school|shopping_mall|store|restaurant|cafe|bank|atm|park|stadium|museum&'
+              'key=$apiKey'
+      );
+
+      final placesResponse = await http.get(placesUrl);
+
+      if (placesResponse.statusCode == 200) {
+        final placesData = json.decode(placesResponse.body);
+
+        if (placesData['status'] == 'OK' &&
+            placesData['results'] != null &&
+            (placesData['results'] as List).isNotEmpty) {
+          final results = placesData['results'] as List;
+
+          // Get the closest landmark
+          for (var place in results) {
+            final name = place['name'];
+
+            if (name != null &&
+                !name.toString().toLowerCase().contains('unnamed') &&
+                name.toString().length > 2) {
+              return 'Near $name';
+            }
+          }
+        }
+      }
+
+      // Fallback to reverse geocoding
+      List<Placemark> placemarks = await placemarkFromCoordinates(lat, lng);
+      if (placemarks.isNotEmpty) {
+        Placemark place = placemarks[0];
+
+        if (place.street != null && place.street!.isNotEmpty) {
+          return place.street!;
+        } else if (place.subLocality != null && place.subLocality!.isNotEmpty) {
+          return place.subLocality!;
+        } else if (place.locality != null && place.locality!.isNotEmpty) {
+          return place.locality!;
+        }
+      }
+    } catch (e) {
+      print('❌ Error getting landmark: $e');
+    }
+
+    // Final fallback to coordinates
+    return 'Lat: ${lat.toStringAsFixed(6)}, Lng: ${lng.toStringAsFixed(6)}';
   }
 }
 
@@ -89,7 +151,6 @@ class RouteProgressHelper {
             math.cos(lat2Rad) *
             math.sin(deltaLngRad / 2) *
             math.sin(deltaLngRad / 2);
-
     double c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
     return _earthRadius * c;
   }
@@ -137,24 +198,19 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   bool _hasCompletedTrip = false;
   String? _activeRequestId;
   bool _isCompletingTrip = false;
-
-  // ✅ Track if navigation has started
   bool _hasStartedNavigation = false;
 
   GoogleMapController? _mapController;
   Position? _currentPosition;
   Set<Polyline> _polylines = {};
   Set<Marker> _markers = {};
-
   String _eta = "--";
   String _distance = "--";
   double _currentSpeed = 0.0;
   bool _isLocationActive = false;
   bool _isTrafficClearing = false;
-
   bool _isLoading = true;
   String? _errorMessage;
-
   BitmapDescriptor? _ambulanceIcon;
   double _currentZoom = 18.5;
 
@@ -167,16 +223,14 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   double _distanceToNextTurn = 0.0;
   double _currentBearing = 0.0;
 
-  // Route progress tracking with dual polylines
+  // Route progress tracking
   List<LatLng> _routePoints = [];
   int _currentRoutePointIndex = 0;
-
   Timer? _routeUpdateTimer;
   Timer? _instructionDismissTimer;
   bool _showInstructionCard = true;
 
   final String _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
-
   StreamSubscription<Position>? _positionSubscription;
 
   @override
@@ -206,19 +260,14 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
-  // ✅ Don't auto-start navigation
   Future<void> _initializeNavigation() async {
     setState(() => _isLoading = true);
     await _determinePosition();
     await _getDirectionsAndRoute();
-
-    // ✅ Fit map bounds to show full route
     _fitMapBounds();
-
     setState(() => _isLoading = false);
   }
 
-  // ✅ NEW: Fit map to show entire route
   void _fitMapBounds() {
     if (_mapController == null || _routePoints.isEmpty) return;
 
@@ -240,18 +289,17 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     );
 
     _mapController!.animateCamera(
-      CameraUpdate.newLatLngBounds(bounds, 100), // 100 is padding
+      CameraUpdate.newLatLngBounds(bounds, 100),
     );
   }
 
-  // ✅ Handle Start Navigation button click
-  // ✅ Handle Start Navigation button click
+  // ✅ UPDATED: Pass API key to Firebase service
   void _onStartNavigation() async {
     setState(() {
       _hasStartedNavigation = true;
     });
 
-    // ✅ Send route request to Firebase (but NOT traffic clearance yet)
+    // ✅ UPDATED: Pass API key for landmark lookup
     final requestId = await FirebaseAmbulanceService.sendRouteRequest(
       ambulanceId: widget.ambulanceId,
       destinationName: widget.destination,
@@ -262,18 +310,16 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       eta: _eta,
       distance: _distance,
       priority: widget.priority,
+      apiKey: _apiKey, // ✅ ADDED: Pass API key
     );
 
     if (requestId != null) {
       _activeRequestId = requestId;
-      // ✅ DO NOT set _isTrafficClearing = true here
-      // User must click "CLEAR TRAFFIC" button manually
     }
 
     _startLocationTracking();
     _startNavigationMode();
   }
-
 
   Future<void> _determinePosition() async {
     try {
@@ -307,7 +353,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _currentPosition = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
-
       debugPrint('Current position: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
     } catch (e) {
       debugPrint('Error getting position: $e');
@@ -334,7 +379,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-
         if (data['status'] == 'OK' && data['routes'].isNotEmpty) {
           final route = data['routes'][0];
           final leg = route['legs'][0];
@@ -347,7 +391,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
           final encodedPolyline = route['overview_polyline']['points'];
           _routePoints = _decodePolyline(encodedPolyline);
-
           _updatePolylines();
           _updateMarkers();
 
@@ -393,7 +436,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
       points.add(LatLng(lat / 1E5, lng / 1E5));
     }
-
     return points;
   }
 
@@ -731,6 +773,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       final startLocation = step['start_location'];
       final double stepLat = (startLocation['lat'] as num).toDouble();
       final double stepLng = (startLocation['lng'] as num).toDouble();
+
       LatLng stepLocation = LatLng(stepLat, stepLng);
 
       double distanceToStep = RouteProgressHelper.distanceHaversine(
@@ -801,7 +844,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
     final markers = <Marker>{};
 
-    // ✅ Show ambulance marker only when navigation has started
     if (_hasStartedNavigation) {
       if (_ambulanceIcon != null) {
         markers.add(
@@ -809,9 +851,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             markerId: const MarkerId('ambulance'),
             position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
             icon: _ambulanceIcon!,
-            rotation: _currentBearing,
-            anchor: const Offset(0.5, 0.5),
-            flat: true,
+            rotation: _currentBearing, // ✅ KEEP: Rotates to show direction of travel
+            anchor: const Offset(0.5, 0.5), // ✅ KEEP: Centers the icon on route
+            flat: false, // ✅ CHANGED: Set to false so it doesn't tilt with map
             infoWindow: InfoWindow(
               title: 'Ambulance ${widget.ambulanceId}',
               snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
@@ -832,7 +874,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         );
       }
     } else {
-      // ✅ Show starting point (current location) before navigation starts
       markers.add(
         Marker(
           markerId: const MarkerId('start'),
@@ -863,7 +904,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     });
   }
 
-  // ✅ NEW: Clear traffic button action
+
   Future<void> _onClearTraffic() async {
     if (!_hasStartedNavigation) return;
 
@@ -871,7 +912,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _isTrafficClearing = true;
     });
 
-    // Show feedback
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Row(
@@ -886,7 +926,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       ),
     );
 
-    // Update Firebase with traffic clearance request
     if (_activeRequestId != null) {
       try {
         await FirebaseDatabase.instanceFor(
@@ -977,7 +1016,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             ),
             onMapCreated: (controller) {
               _mapController = controller;
-              // Fit bounds after map is created
               Future.delayed(const Duration(milliseconds: 500), () {
                 _fitMapBounds();
               });
@@ -1040,7 +1078,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             ),
           ),
 
-          // Navigation info card (only show when navigation has started)
+          // Navigation info card
           if (_hasStartedNavigation && _showInstructionCard && _currentInstruction.isNotEmpty)
             Positioned(
               top: 110,
@@ -1110,16 +1148,13 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                       children: [
                         _buildStatItem(Icons.timer, 'ETA', _eta),
                         _buildStatItem(Icons.route, 'Distance', _distance),
-                        // ✅ Show speed only when navigation has started
                         if (_hasStartedNavigation)
                           _buildStatItem(Icons.speed, 'Speed', '${_currentSpeed.toStringAsFixed(0)} km/h'),
                       ],
                     ),
                     const SizedBox(height: 12),
 
-                    // ✅ Show different buttons based on navigation state
                     if (!_hasStartedNavigation)
-                    // Show "START NAVIGATION" button before navigation starts
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
@@ -1149,10 +1184,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                         ),
                       )
                     else
-                    // Show "CLEAR TRAFFIC" and "COMPLETE TRIP" buttons after navigation starts
                       Column(
                         children: [
-                          // ✅ CLEAR TRAFFIC button
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
@@ -1185,7 +1218,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                             ),
                           ),
                           const SizedBox(height: 8),
-                          // COMPLETE TRIP button
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(

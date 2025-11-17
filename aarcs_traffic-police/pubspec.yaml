@@ -10,6 +10,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  geolocator: ^11.0.0
+  geocoding: ^3.0.0
 
   # Firebase Services
   firebase_core: ^3.6.0

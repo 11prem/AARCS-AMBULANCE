@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // ✅ ADDED: For clipboard functionality
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 
@@ -39,10 +40,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
       print('🔍 Querying history for ambulance: ${widget.ambulanceId}');
 
-      // TEMPORARY: Get ALL emergency requests without filtering
       final snapshot = await _database
           .child('emergency_requests')
-          .get(); // Removed the orderByChild filter
+          .get();
 
       print('📊 Snapshot exists: ${snapshot.exists}');
       print('📊 Raw data: ${snapshot.value}');
@@ -63,17 +63,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
           print('   - Status: $status');
           print('   - Match: ${reqAmbulanceId == widget.ambulanceId}');
 
-          // Filter by ambulanceId in code instead of query
           if (reqAmbulanceId == widget.ambulanceId &&
               (status == 'accepted' || status == 'completed' || status == 'cancelled')) {
-
             final sourceCoords = requestData['sourceCoords'];
             final destCoords = requestData['destCoords'];
 
             historyList.add({
               'requestId': key,
               'ambulanceId': requestData['ambulanceId'] ?? 'Unknown',
-              'currentLocation': requestData['currentLocation'] ?? 'Unknown',
+              'currentLocation': requestData['currentLocation'] ?? 'Unknown', // ✅ This is already landmark from Firebase
               'destination': requestData['destination'] ?? 'Unknown Hospital',
               'status': status,
               'timestamp': requestData['timestamp'] ?? 0,
@@ -92,7 +90,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
         print('📋 Total matching history items: ${historyList.length}');
 
-        // Sort by timestamp (newest first)
         historyList.sort((a, b) {
           final aTime = a['timestamp'] ?? 0;
           final bTime = b['timestamp'] ?? 0;
@@ -118,20 +115,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
-
-  // Custom date formatting without intl package
   String _formatTimestamp(dynamic timestamp) {
     if (timestamp == null || timestamp == 0) return 'N/A';
     try {
       final date = DateTime.fromMillisecondsSinceEpoch(timestamp as int);
       final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
       final month = months[date.month - 1];
       final day = date.day.toString().padLeft(2, '0');
       final year = date.year;
       final hour = date.hour.toString().padLeft(2, '0');
       final minute = date.minute.toString().padLeft(2, '0');
-
       return '$month $day, $year $hour:$minute';
     } catch (e) {
       return 'Invalid date';
@@ -147,7 +140,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
       final start = DateTime.fromMillisecondsSinceEpoch(startTime as int);
       final completed = DateTime.fromMillisecondsSinceEpoch(completedTime as int);
       final duration = completed.difference(start);
-
       final hours = duration.inHours;
       final minutes = duration.inMinutes % 60;
 
@@ -185,6 +177,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
       default:
         return Icons.info;
     }
+  }
+
+  // ✅ NEW: Copy to clipboard function
+  void _copyToClipboard(String text, String label) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$label copied to clipboard'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   @override
@@ -289,6 +293,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final statusColor = _getStatusColor(status);
     final duration = _calculateDuration(item['timestamp'], item['completed_at']);
     final trafficRequested = item['trafficClearanceRequested'] ?? false;
+    final tripId = item['requestId'] ?? 'Unknown';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -344,13 +349,32 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        'Trip ID: ${item['requestId'].substring(0, 8)}...',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).brightness == Brightness.dark
-                              ? Colors.white70
-                              : Colors.grey[600],
+                      // ✅ UPDATED: Full Trip ID with copy functionality
+                      GestureDetector(
+                        onTap: () => _copyToClipboard(tripId, 'Trip ID'),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: SelectableText(
+                                'Trip ID: $tripId',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(context).brightness == Brightness.dark
+                                      ? Colors.white70
+                                      : Colors.grey[600],
+                                  fontFamily: 'monospace',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.copy,
+                              size: 14,
+                              color: Theme.of(context).brightness == Brightness.dark
+                                  ? Colors.white70
+                                  : Colors.grey[600],
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -383,11 +407,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                // Starting Location with coordinates
+                // ✅ UPDATED: Starting Location with landmark only
                 _buildDetailRow(
                   Icons.my_location,
                   'Starting Location',
-                  '${item['currentLocation']}\nCoords: (${(item['sourceLat'] as num).toStringAsFixed(4)}, ${(item['sourceLng'] as num).toStringAsFixed(4)})',
+                  item['currentLocation'] ?? 'Unknown', // Shows landmark directly
                   Colors.blue,
                 ),
                 const SizedBox(height: 12),
@@ -546,7 +570,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ? Colors.white70
                     : Colors.grey[600],
               ),
-
               const SizedBox(width: 4),
               Text(
                 label,
