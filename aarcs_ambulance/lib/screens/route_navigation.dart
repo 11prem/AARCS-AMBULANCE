@@ -10,6 +10,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:http/http.dart' as http;
+import '../models/priority_model.dart';
 
 // Firebase Service for Ambulance
 class FirebaseAmbulanceService {
@@ -27,13 +28,12 @@ class FirebaseAmbulanceService {
     required double destLng,
     String? eta,
     String? distance,
+    required EmergencyPriority priority,
   }) async {
     try {
-      print('📝 Preparing Firebase write...');
-
+      print('📝 Preparing Firebase write with priority: ${priority.index}...');
       final requestRef = _database.child('emergency_requests').push();
       final requestId = requestRef.key;
-
       print('📝 Generated Request ID: $requestId');
 
       final requestData = {
@@ -44,6 +44,8 @@ class FirebaseAmbulanceService {
         'timestamp': ServerValue.timestamp,
         'eta': eta ?? 'N/A',
         'distance': distance ?? 'N/A',
+        'priority': priority.index,
+        'priorityLabel': PriorityConfig.fromPriority(priority).label,
         'sourceCoords': {
           'lat': currentLat,
           'lng': currentLng,
@@ -62,7 +64,6 @@ class FirebaseAmbulanceService {
 
       print('✅ Firebase write SUCCESS!');
       print('   Request ID: $requestId');
-
       return requestId;
     } catch (e) {
       print('❌ Firebase write FAILED: $e');
@@ -93,6 +94,7 @@ class RouteProgressHelper {
 
   static int findNearestPointOnRoute(LatLng currentPosition, List<LatLng> routePoints) {
     if (routePoints.isEmpty) return 0;
+
     double minDistance = double.infinity;
     int nearestIndex = 0;
 
@@ -103,6 +105,7 @@ class RouteProgressHelper {
         nearestIndex = i;
       }
     }
+
     return nearestIndex;
   }
 }
@@ -113,6 +116,7 @@ class RouteNavigationScreen extends StatefulWidget {
   final double? destinationLat;
   final double? destinationLng;
   final VoidCallback onToggleTheme;
+  final EmergencyPriority priority;
 
   const RouteNavigationScreen({
     super.key,
@@ -121,6 +125,7 @@ class RouteNavigationScreen extends StatefulWidget {
     required this.destinationLat,
     required this.destinationLng,
     required this.onToggleTheme,
+    required this.priority,
   });
 
   @override
@@ -131,7 +136,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   bool _hasCompletedTrip = false;
   String? _activeRequestId;
   bool _isCompletingTrip = false;
-
   GoogleMapController? _mapController;
   Position? _currentPosition;
   Set<Polyline> _polylines = {};
@@ -181,7 +185,284 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     super.dispose();
   }
 
-  // NEW: Complete Trip manually
+  Future<void> _loadCustomMarkerIcon() async {
+    try {
+      _ambulanceIcon = await BitmapDescriptor.fromAssetImage(
+        const ImageConfiguration(size: Size(48, 48)),
+        'assets/icons/amb.png',
+      );
+    } catch (e) {
+      debugPrint('Failed to load custom marker: $e');
+    }
+  }
+
+  Future<void> _initializeNavigation() async {
+    setState(() => _isLoading = true);
+
+    await _determinePosition();
+    await _getDirectionsAndRoute();
+
+    if (_currentPosition != null) {
+      _startLocationTracking();
+      _startNavigationMode();
+    }
+
+    setState(() => _isLoading = false);
+  }
+
+  Future<void> _determinePosition() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        await Geolocator.openLocationSettings();
+        setState(() {
+          _errorMessage = 'Location services disabled. Please enable.';
+        });
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          setState(() {
+            _errorMessage = 'Location permission denied';
+          });
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        setState(() {
+          _errorMessage = 'Location permissions are permanently denied';
+        });
+        return;
+      }
+
+      _currentPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      debugPrint('Current position: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
+    } catch (e) {
+      debugPrint('Error getting position: $e');
+      setState(() {
+        _errorMessage = 'Failed to get location: $e';
+      });
+    }
+  }
+
+  Future<void> _getDirectionsAndRoute() async {
+    if (_currentPosition == null ||
+        widget.destinationLat == null ||
+        widget.destinationLng == null) {
+      return;
+    }
+
+    final url = 'https://maps.googleapis.com/maps/api/directions/json?'
+        'origin=${_currentPosition!.latitude},${_currentPosition!.longitude}&'
+        'destination=${widget.destinationLat},${widget.destinationLng}&'
+        'mode=driving&'
+        'key=$_apiKey';
+
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['status'] == 'OK' && data['routes'].isNotEmpty) {
+          final route = data['routes'][0];
+          final leg = route['legs'][0];
+
+          setState(() {
+            _eta = leg['duration']['text'];
+            _distance = leg['distance']['text'];
+            _routeSteps = List<Map<String, dynamic>>.from(leg['steps']);
+          });
+
+          final encodedPolyline = route['overview_polyline']['points'];
+          _routePoints = _decodePolyline(encodedPolyline);
+
+          _updatePolylines();
+          _updateMarkers();
+
+          if (_routeSteps.isNotEmpty) {
+            setState(() {
+              _currentInstruction = _cleanHtmlTags(_routeSteps[0]['html_instructions']);
+              if (_routeSteps.length > 1) {
+                _nextInstruction = _cleanHtmlTags(_routeSteps[1]['html_instructions']);
+              }
+            });
+          }
+
+          final requestId = await FirebaseAmbulanceService.sendRouteRequest(
+            ambulanceId: widget.ambulanceId,
+            destinationName: widget.destination,
+            currentLat: _currentPosition!.latitude,
+            currentLng: _currentPosition!.longitude,
+            destLat: widget.destinationLat!,
+            destLng: widget.destinationLng!,
+            eta: _eta,
+            distance: _distance,
+            priority: widget.priority,
+          );
+
+          if (requestId != null) {
+            _activeRequestId = requestId;
+            setState(() {
+              _isTrafficClearing = true;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching directions: $e');
+    }
+  }
+
+  List<LatLng> _decodePolyline(String encoded) {
+    List<LatLng> points = [];
+    int index = 0, len = encoded.length;
+    int lat = 0, lng = 0;
+
+    while (index < len) {
+      int b, shift = 0, result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+
+      points.add(LatLng(lat / 1E5, lng / 1E5));
+    }
+
+    return points;
+  }
+
+  String _cleanHtmlTags(String htmlString) {
+    RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
+    return htmlString.replaceAll(exp, '');
+  }
+
+  void _startLocationTracking() {
+    const locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 5,
+    );
+
+    _positionSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
+      if (!mounted) return;
+
+      final oldPosition = _currentPosition;
+      _currentPosition = position;
+
+      if (oldPosition != null) {
+        _currentBearing = Geolocator.bearingBetween(
+          oldPosition.latitude,
+          oldPosition.longitude,
+          position.latitude,
+          position.longitude,
+        );
+
+        final double distanceTraveled = Geolocator.distanceBetween(
+          oldPosition.latitude,
+          oldPosition.longitude,
+          position.latitude,
+          position.longitude,
+        );
+
+        final num timeDiff = (position.timestamp?.millisecondsSinceEpoch ?? 0) -
+            (oldPosition.timestamp?.millisecondsSinceEpoch ?? 0);
+
+        if (timeDiff > 0) {
+          _currentSpeed = (distanceTraveled / (timeDiff / 1000)) * 3.6;
+        }
+      }
+
+      setState(() {
+        _isLocationActive = true;
+      });
+
+      _updateMarkers();
+      _sendLocationToFirebase();
+
+      if (_isNavigating) {
+        _updateRouteProgress();
+        _updateNavigationCamera();
+      }
+
+      _checkIfReachedDestination();
+    });
+  }
+
+  void _checkIfReachedDestination() {
+    if (_currentPosition == null || widget.destinationLat == null || widget.destinationLng == null) {
+      return;
+    }
+
+    final distanceToDestination = Geolocator.distanceBetween(
+      _currentPosition!.latitude,
+      _currentPosition!.longitude,
+      widget.destinationLat!,
+      widget.destinationLng!,
+    );
+
+    if (distanceToDestination < 50 && !_hasCompletedTrip) {
+      _hasCompletedTrip = true;
+      _showArrivalDialog();
+    }
+  }
+
+  void _showArrivalDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.green, size: 32),
+              SizedBox(width: 8),
+              Text('Arrived at Destination'),
+            ],
+          ),
+          content: const Text(
+            'You have reached your destination. Would you like to complete this trip?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('NOT YET'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _completeTrip();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+              ),
+              child: const Text('COMPLETE TRIP', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _completeTrip() async {
     if (_isCompletingTrip) return;
 
@@ -192,7 +473,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     try {
       print('🏁 Manually completing trip...');
 
-      // Find the active request for this ambulance
       final requestQuery = await FirebaseDatabase.instanceFor(
         app: Firebase.app(),
         databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
@@ -214,7 +494,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
         print('🔍 Found request: $requestId with status: $currentStatus');
 
-        // Update ANY pending or accepted request (not already completed or cancelled)
         if (currentStatus == 'pending' || currentStatus == 'accepted') {
           await FirebaseDatabase.instanceFor(
             app: Firebase.app(),
@@ -245,8 +524,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               ),
             );
 
-            // Show dialog and navigate back after a delay
             await Future.delayed(const Duration(milliseconds: 500));
+
             showDialog(
               context: context,
               barrierDismissible: false,
@@ -262,8 +541,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                 actions: [
                   TextButton(
                     onPressed: () {
-                      Navigator.of(context).pop(); // Close dialog
-                      Navigator.of(context).pop(); // Go back to dashboard
+                      Navigator.of(context).pop();
+                      Navigator.of(context).pop();
                     },
                     child: const Text('VIEW HISTORY', style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
@@ -272,7 +551,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             );
           }
         } else if (currentStatus == 'completed') {
-          // Already completed - just show message and go back
           print('ℹ️ Trip already completed');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -282,10 +560,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               ),
             );
             await Future.delayed(const Duration(seconds: 1));
-            Navigator.of(context).pop(); // Go back to dashboard
+            Navigator.of(context).pop();
           }
         } else {
-          throw Exception('Cannot complete: Trip is ${currentStatus}');
+          throw Exception('Cannot complete: Trip is $currentStatus');
         }
       } else {
         print('❌ No active request found for ambulance: ${widget.ambulanceId}');
@@ -308,210 +586,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         });
       }
     }
-  }
-
-  // Add this method to check if ambulance reached destination
-  void _checkIfReachedDestination() {
-    if (_currentPosition == null || widget.destinationLat == null || widget.destinationLng == null) {
-      return;
-    }
-
-    final distanceToDestination = Geolocator.distanceBetween(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      widget.destinationLat!,
-      widget.destinationLng!,
-    );
-
-    // If within 50 meters of destination
-    if (distanceToDestination < 50.0 && !_hasCompletedTrip) {
-      _hasCompletedTrip = true;
-      _completeTrip();
-    }
-  }
-
-  Future<void> _loadCustomMarkerIcon({double zoom = 15.0}) async {
-    try {
-      double markerSize = 45.0;
-      _ambulanceIcon = await BitmapDescriptor.fromAssetImage(
-        ImageConfiguration(
-          size: Size(markerSize, markerSize),
-          devicePixelRatio: 2.5,
-        ),
-        'assets/icons/amb.png',
-      );
-      print('✅ Ambulance icon loaded: ${markerSize.toInt()}px');
-    } catch (e) {
-      print('❌ Failed to load ambulance icon: $e');
-      _ambulanceIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue);
-    }
-  }
-
-  Future<void> _initializeNavigation() async {
-    try {
-      print('🔄 Starting initialization...');
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-      });
-
-      print('📍 Checking location permissions...');
-      await _checkLocationPermissions();
-
-      print('📍 Getting current position...');
-      await _getCurrentPosition();
-
-      if (_currentPosition != null) {
-        print('✅ Current position: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
-        print('🗺️ Getting directions...');
-        await _getDirections();
-        print('✅ Directions loaded, starting location tracking...');
-        _startLocationTracking();
-      } else {
-        throw Exception('Unable to get current location');
-      }
-    } catch (e) {
-      print('❌ Initialization error: $e');
-      setState(() {
-        _errorMessage = 'Initialization failed: ${e.toString()}';
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _checkLocationPermissions() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      throw Exception('Location services are disabled');
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        throw Exception('Location permissions are denied');
-      }
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      throw Exception('Location permissions are permanently denied');
-    }
-  }
-
-  Future<void> _getCurrentPosition() async {
-    try {
-      print('📍 Attempting to get current position...');
-      _currentPosition = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
-      );
-      print('✅ Position obtained: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
-      setState(() {
-        _isLocationActive = true;
-      });
-    } catch (e) {
-      print('⚠️ Failed to get current position, trying last known...');
-      try {
-        _currentPosition = await Geolocator.getLastKnownPosition();
-        if (_currentPosition != null) {
-          print('✅ Last known position: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
-          setState(() {
-            _isLocationActive = true;
-          });
-        } else {
-          throw Exception('No location data available');
-        }
-      } catch (fallbackError) {
-        print('❌ All location attempts failed: $e');
-        throw Exception('Failed to get location: $e');
-      }
-    }
-  }
-
-  void _startLocationTracking() {
-    const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 10,
-    );
-
-    _positionSubscription = Geolocator.getPositionStream(
-      locationSettings: locationSettings,
-    ).listen(
-          (Position position) {
-        _updateLocation(position);
-      },
-      onError: (error) {
-        debugPrint('Location stream error: $error');
-      },
-    );
-  }
-
-  void _updateLocation(Position newPosition) {
-    if (_currentPosition != null) {
-      final double distanceInMeters = Geolocator.distanceBetween(
-        _currentPosition!.latitude,
-        _currentPosition!.longitude,
-        newPosition.latitude,
-        newPosition.longitude,
-      );
-
-      if (distanceInMeters < 10.0) {
-        print('⏸️ Movement too small (${distanceInMeters.toStringAsFixed(1)}m), ignoring GPS noise');
-        return;
-      }
-
-      final int deltaTime = newPosition.timestamp != null && _currentPosition!.timestamp != null
-          ? newPosition.timestamp!.difference(_currentPosition!.timestamp!).inMilliseconds
-          : 0;
-
-      if (deltaTime > 0) {
-        final double speedMps = distanceInMeters / (deltaTime / 1000);
-        final double speedKmh = speedMps * 3.6;
-
-        if (speedKmh > 2.0) {
-          _currentBearing = Geolocator.bearingBetween(
-            _currentPosition!.latitude,
-            _currentPosition!.longitude,
-            newPosition.latitude,
-            newPosition.longitude,
-          );
-        }
-
-        setState(() {
-          _currentSpeed = speedKmh;
-        });
-      }
-    }
-
-    LatLng snappedPosition = _snapToRoute(
-        LatLng(newPosition.latitude, newPosition.longitude)
-    );
-
-    setState(() {
-      _currentPosition = Position(
-        latitude: snappedPosition.latitude,
-        longitude: snappedPosition.longitude,
-        timestamp: newPosition.timestamp,
-        accuracy: newPosition.accuracy,
-        altitude: newPosition.altitude,
-        heading: newPosition.heading,
-        speed: newPosition.speed,
-        speedAccuracy: newPosition.speedAccuracy,
-        altitudeAccuracy: newPosition.altitudeAccuracy,
-        headingAccuracy: newPosition.headingAccuracy,
-      );
-    });
-
-    _updateAmbulanceMarker();
-    _sendLocationToFirebase();
-
-    if (_isNavigating) {
-      _updateRouteProgress();
-      _updateNavigationCamera();
-    }
-
-    // Check if reached destination
-    _checkIfReachedDestination();
   }
 
   LatLng _snapToRoute(LatLng currentLocation) {
@@ -561,7 +635,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         final requests = requestQuery.snapshot.value as Map;
         final requestId = requests.keys.first;
 
-        // Store the active request ID
         _activeRequestId = requestId;
 
         await FirebaseDatabase.instanceFor(
@@ -633,15 +706,19 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     });
   }
 
+  // ✅ FIXED: Properly cast num to double
   void _updateNavigationInstructions() {
     if (_routeSteps.isEmpty) return;
 
     for (int i = 0; i < _routeSteps.length; i++) {
       var step = _routeSteps[i];
-      LatLng stepLocation = LatLng(
-        step['start_location']['lat'],
-        step['start_location']['lng'],
-      );
+
+      // ✅ FIX: Properly cast num to double
+      final startLocation = step['start_location'];
+      final double stepLat = (startLocation['lat'] as num).toDouble();
+      final double stepLng = (startLocation['lng'] as num).toDouble();
+
+      LatLng stepLocation = LatLng(stepLat, stepLng);
 
       double distanceToStep = RouteProgressHelper.distanceHaversine(
         LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
@@ -683,7 +760,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _showInstructionCard = true;
     });
 
-    _instructionDismissTimer = Timer(const Duration(seconds: 5), () {
+    _instructionDismissTimer = Timer(const Duration(seconds: 10), () {
       if (mounted) {
         setState(() {
           _showInstructionCard = false;
@@ -692,338 +769,103 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     });
   }
 
-  void _updateAmbulanceMarker() {
-    if (_currentPosition == null) return;
-
-    setState(() {
-      _markers = _markers.map((marker) {
-        if (marker.markerId.value == 'current_location') {
-          return marker.copyWith(
-            positionParam: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-            rotationParam: _currentBearing,
-          );
-        }
-        return marker;
-      }).toSet();
-    });
-  }
-
-  Future<void> _getDirections() async {
-    if (_currentPosition == null) {
-      throw Exception('Current position not available');
-    }
-
-    try {
-      print('🗺️ Getting directions from (${_currentPosition!.latitude}, ${_currentPosition!.longitude}) to (${widget.destinationLat}, ${widget.destinationLng})');
-
-      double destLat;
-      double destLng;
-
-      if (widget.destinationLat != null && widget.destinationLng != null) {
-        destLat = widget.destinationLat!;
-        destLng = widget.destinationLng!;
-      } else {
-        final coordinates = await _geocodeAddress(widget.destination);
-        destLat = coordinates['lat']!;
-        destLng = coordinates['lng']!;
-      }
-
-      final directions = await _fetchDirections(
-        _currentPosition!.latitude,
-        _currentPosition!.longitude,
-        destLat,
-        destLng,
-      );
-
-      _processDirectionsResponse(directions, destLat, destLng);
-      print('✅ Directions received successfully');
-
-      setState(() {
-        _isLoading = false;
-      });
-    } catch (e) {
-      debugPrint('getDirections error: $e');
-      setState(() {
-        _isLoading = false;
-      });
-      throw Exception('Failed to get directions: ${e.toString()}');
-    }
-  }
-
-  Future<Map<String, double>> _geocodeAddress(String address) async {
-    final url = Uri.parse(
-        'https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(address)}&key=$_apiKey'
-    );
-
-    final response = await http.get(url);
-
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['status'] == 'OK' && data['results'].isNotEmpty) {
-        final location = data['results'][0]['geometry']['location'];
-        return {
-          'lat': location['lat'],
-          'lng': location['lng'],
-        };
-      }
-    }
-    throw Exception('Failed to geocode address');
-  }
-
-  Future<Map<String, dynamic>> _fetchDirections(
-      double startLat,
-      double startLng,
-      double destLat,
-      double destLng,
-      ) async {
-    final url = Uri.parse(
-        'https://maps.googleapis.com/maps/api/directions/json?'
-            'origin=$startLat,$startLng&'
-            'destination=$destLat,$destLng&'
-            'key=$_apiKey&'
-            'mode=driving&'
-            'alternatives=false'
-    );
-
-    final response = await http.get(url);
-
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      if (data['status'] == 'OK' && data['routes'].isNotEmpty) {
-        return data;
-      } else {
-        throw Exception('No routes found: ${data['status']}');
-      }
-    } else {
-      throw Exception('Directions API error: ${response.statusCode}');
-    }
-  }
-
-  void _processDirectionsResponse(Map<String, dynamic> directions, double destLat, double destLng) {
-    if (directions['routes'] == null || directions['routes'].isEmpty) {
-      throw Exception('No routes found');
-    }
-
-    final route = directions['routes'][0];
-    final leg = route['legs'][0];
-
-    setState(() {
-      _eta = leg['duration']['text'];
-      _distance = leg['distance']['text'];
-      _routeSteps = List<Map<String, dynamic>>.from(leg['steps']);
-    });
-
-    final points = route['overview_polyline']['points'];
-    final decodedPoints = _decodePolyline(points);
-
-    setState(() {
-      _routePoints = decodedPoints;
-      _currentRoutePointIndex = 0;
-    });
-
-    _updatePolylines();
-    _addMarkersToMap(destLat, destLng);
-
-    if (_routeSteps.isNotEmpty) {
-      setState(() {
-        _currentInstruction = _cleanHtmlTags(_routeSteps[0]['html_instructions']);
-        if (_routeSteps.length > 1) {
-          _nextInstruction = _cleanHtmlTags(_routeSteps[1]['html_instructions']);
-        }
-      });
-    }
-  }
-
-  List<LatLng> _decodePolyline(String encoded) {
-    List<LatLng> points = [];
-    int index = 0, len = encoded.length;
-    int lat = 0, lng = 0;
-
-    while (index < len) {
-      int b, shift = 0, result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-
-      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lat += dlat;
-
-      shift = 0;
-      result = 0;
-
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-
-      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lng += dlng;
-
-      points.add(LatLng(lat / 1E5, lng / 1E5));
-    }
-
-    return points;
-  }
-
-  void _addMarkersToMap(double destLat, double destLng) {
-    setState(() {
-      _markers = {
-        Marker(
-          markerId: const MarkerId('current_location'),
-          position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          icon: _ambulanceIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-          rotation: _currentBearing,
-          anchor: const Offset(0.5, 0.5),
-          infoWindow: InfoWindow(
-            title: 'Ambulance ${widget.ambulanceId}',
-            snippet: 'Current Location',
-          ),
-        ),
-        Marker(
-          markerId: const MarkerId('destination'),
-          position: LatLng(destLat, destLng),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueCyan),
-          infoWindow: InfoWindow(
-            title: widget.destination,
-            snippet: 'Destination',
-          ),
-        ),
-      };
-    });
-  }
-
-  String _cleanHtmlTags(String htmlString) {
-    RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
-    return htmlString.replaceAll(exp, '');
-  }
-
-  void _startNavigation() {
+  void _startNavigationMode() {
     setState(() {
       _isNavigating = true;
     });
-    _updateNavigationCamera();
-  }
 
-  void _stopNavigation() {
-    setState(() {
-      _isNavigating = false;
+    _routeUpdateTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (mounted && _isNavigating) {
+        _updateRouteProgress();
+      }
     });
   }
 
-  Future<void> _clearTraffic() async {
-    if (_currentPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('⚠️ Current location not available'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+  void _updateMarkers() {
+    if (_currentPosition == null || widget.destinationLat == null || widget.destinationLng == null) {
       return;
     }
 
-    setState(() {
-      _isTrafficClearing = true;
-    });
+    final markers = <Marker>{};
 
-    try {
-      double destLat;
-      double destLng;
-
-      if (widget.destinationLat != null && widget.destinationLng != null) {
-        destLat = widget.destinationLat!;
-        destLng = widget.destinationLng!;
-      } else {
-        final coordinates = await _geocodeAddress(widget.destination);
-        destLat = coordinates['lat']!;
-        destLng = coordinates['lng']!;
-      }
-
-      print('🚑 CREATING FIREBASE REQUEST...');
-      print('   - Ambulance ID: ${widget.ambulanceId}');
-      print('   - Destination: ${widget.destination}');
-      print('   - Current Position: (${_currentPosition!.latitude}, ${_currentPosition!.longitude})');
-      print('   - Destination Coords: ($destLat, $destLng)');
-      print('   - ETA: $_eta');
-      print('   - Distance: $_distance');
-
-      final requestId = await FirebaseAmbulanceService.sendRouteRequest(
-        ambulanceId: widget.ambulanceId,
-        destinationName: widget.destination,
-        currentLat: _currentPosition!.latitude,
-        currentLng: _currentPosition!.longitude,
-        destLat: destLat,
-        destLng: destLng,
-        eta: _eta,
-        distance: _distance,
+    if (_ambulanceIcon != null) {
+      markers.add(
+        Marker(
+          markerId: const MarkerId('ambulance'),
+          position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          icon: _ambulanceIcon!,
+          rotation: _currentBearing,
+          anchor: const Offset(0.5, 0.5),
+          flat: true,
+          infoWindow: InfoWindow(
+            title: 'Ambulance ${widget.ambulanceId}',
+            snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
+          ),
+        ),
       );
-
-      if (requestId != null) {
-        _activeRequestId = requestId;
-        print('✅ REQUEST CREATED SUCCESSFULLY!');
-        print('   - Request ID: $requestId');
-        print('   - Check Firebase Console now!');
-      } else {
-        print('❌ REQUEST CREATION RETURNED NULL');
-      }
-
-      setState(() {
-        _isTrafficClearing = false;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.check_circle, color: Colors.white),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text('✅ Traffic clearing request sent to authorities'),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 3),
+    } else {
+      markers.add(
+        Marker(
+          markerId: const MarkerId('ambulance'),
+          position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          infoWindow: InfoWindow(
+            title: 'Ambulance ${widget.ambulanceId}',
+            snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
           ),
-        );
-      }
-    } catch (e) {
-      print('❌ CRITICAL ERROR IN _clearTraffic: $e');
-      print('   Stack trace: ${StackTrace.current}');
-
-      setState(() {
-        _isTrafficClearing = false;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Failed to send request: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+        ),
+      );
     }
+
+    markers.add(
+      Marker(
+        markerId: const MarkerId('destination'),
+        position: LatLng(widget.destinationLat!, widget.destinationLng!),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(
+          title: widget.destination,
+          snippet: 'Hospital/Emergency Location',
+        ),
+      ),
+    );
+
+    setState(() {
+      _markers = markers;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final priorityConfig = PriorityConfig.fromPriority(widget.priority);
+
+    if (_isLoading) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Loading Route'),
+          backgroundColor: Colors.red,
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Initializing navigation...'),
+            ],
+          ),
+        ),
+      );
+    }
 
     if (_errorMessage != null) {
       return Scaffold(
         appBar: AppBar(
-          title: Text('Navigation - ${widget.ambulanceId}'),
+          title: const Text('Navigation Error'),
           backgroundColor: Colors.red,
-          foregroundColor: Colors.white,
         ),
         body: Center(
           child: Padding(
-            padding: const EdgeInsets.all(20.0),
+            padding: const EdgeInsets.all(24.0),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -1031,13 +873,15 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                 const SizedBox(height: 16),
                 Text(
                   _errorMessage!,
-                  textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 16),
+                  textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 24),
                 ElevatedButton(
-                  onPressed: _initializeNavigation,
-                  child: const Text('Retry'),
+                  onPressed: () {
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Go Back'),
                 ),
               ],
             ),
@@ -1047,252 +891,208 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Navigation - ${widget.ambulanceId}'),
-        backgroundColor: Colors.red,
-        foregroundColor: Colors.white,
-        actions: [
-          if (_isNavigating)
-            IconButton(
-              icon: const Icon(Icons.stop),
-              onPressed: _stopNavigation,
-              tooltip: 'Stop Navigation',
-            )
-          else
-            IconButton(
-              icon: const Icon(Icons.navigation),
-              onPressed: _startNavigation,
-              tooltip: 'Start Navigation',
-            ),
-        ],
-      ),
       body: Stack(
         children: [
-          // Map
-          _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : (_currentPosition == null)
-              ? const Center(child: Text('Location not available'))
-              : ClipRRect(
-            borderRadius: BorderRadius.circular(0),
-            child: GoogleMap(
-              initialCameraPosition: CameraPosition(
-                target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-                zoom: 18.5,
-                bearing: 0,
-                tilt: 0,
-              ),
-              onMapCreated: (controller) {
-                _mapController = controller;
-              },
-              polylines: _polylines,
-              markers: _markers,
-              myLocationEnabled: false,
-              myLocationButtonEnabled: false,
-              zoomControlsEnabled: true,
-              compassEnabled: true,
-              trafficEnabled: true,
-              mapType: MapType.normal,
-              onCameraMove: (CameraPosition position) {
-                _currentZoom = position.zoom;
-              },
-              onCameraIdle: () async {
-                await _loadCustomMarkerIcon(zoom: _currentZoom);
-                _updateAmbulanceMarker();
-              },
+          GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: _currentPosition != null
+                  ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
+                  : LatLng(widget.destinationLat ?? 0, widget.destinationLng ?? 0),
+              zoom: 18.5,
+              bearing: 0,
+              tilt: 45.0,
             ),
+            onMapCreated: (controller) {
+              _mapController = controller;
+            },
+            markers: _markers,
+            polylines: _polylines,
+            myLocationEnabled: false,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            compassEnabled: true,
+            trafficEnabled: true,
+            mapType: MapType.normal,
           ),
 
-          // Info cards
-          if (!_isLoading && _currentPosition != null)
-            Positioned(
-              top: 16,
-              left: 16,
-              right: 16,
+          // Priority badge at top
+          Positioned(
+            top: 50,
+            left: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: priorityConfig.backgroundColor,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: priorityConfig.color, width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildInfoCard('$_eta', isDark),
-                  _buildInfoCard('$_distance', isDark),
+                  Icon(priorityConfig.icon, color: priorityConfig.color, size: 20),
+                  const SizedBox(width: 6),
+                  Text(
+                    priorityConfig.label,
+                    style: TextStyle(
+                      color: priorityConfig.color,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
                 ],
               ),
             ),
+          ),
 
-          // Navigation instructions card
-          if (_isNavigating && _currentInstruction.isNotEmpty && _showInstructionCard)
+          // Back button
+          Positioned(
+            top: 50,
+            right: 16,
+            child: FloatingActionButton(
+              mini: true,
+              backgroundColor: Colors.white,
+              onPressed: () => Navigator.pop(context),
+              child: const Icon(Icons.arrow_back, color: Colors.black),
+            ),
+          ),
+
+          // Navigation info card
+          if (_showInstructionCard && _currentInstruction.isNotEmpty)
             Positioned(
-              top: 100,
+              top: 110,
               left: 16,
               right: 16,
-              child: Dismissible(
-                key: Key('instruction_$_currentStepIndex'),
-                direction: DismissDirection.horizontal,
-                onDismissed: (direction) {
-                  setState(() {
-                    _showInstructionCard = false;
-                  });
-                  _instructionDismissTimer?.cancel();
-                  print('👆 Instruction card swiped away');
-                },
-                child: Card(
-                  color: Colors.green,
-                  elevation: 8,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.arrow_upward, color: Colors.white, size: 32),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                _currentInstruction,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
+              child: Card(
+                elevation: 8,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.navigation, color: Colors.blue, size: 24),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _currentInstruction,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const Icon(Icons.swipe, color: Colors.white70, size: 20),
-                          ],
-                        ),
-                        if (_nextInstruction.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            'Then: $_nextInstruction',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 14,
-                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            onPressed: () {
+                              setState(() {
+                                _showInstructionCard = false;
+                              });
+                            },
                           ),
                         ],
+                      ),
+                      if (_nextInstruction.isNotEmpty) ...[
                         const SizedBox(height: 8),
-                        LinearProgressIndicator(
-                          value: 0.2,
-                          backgroundColor: Colors.white24,
-                          valueColor: const AlwaysStoppedAnimation(Colors.white),
+                        Text(
+                          'Then: $_nextInstruction',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
                         ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
               ),
             ),
 
-          // Speed indicator
-          if (!_isLoading)
-            Positioned(
-              bottom: 230,
-              left: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.grey[850] : Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
+          // Bottom stats card
+          Positioned(
+            bottom: 16,
+            left: 16,
+            right: 16,
+            child: Card(
+              elevation: 8,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
                 child: Column(
                   children: [
-                    Text(
-                      '${_currentSpeed.toStringAsFixed(0)} km/h',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _buildStatItem(Icons.timer, 'ETA', _eta),
+                        _buildStatItem(Icons.route, 'Distance', _distance),
+                        _buildStatItem(Icons.speed, 'Speed', '${_currentSpeed.toStringAsFixed(0)} km/h'),
+                      ],
                     ),
-                    const Text(
-                      'Current Speed',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    const SizedBox(height: 12),
+                    if (_isTrafficClearing)
+                      Container(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.check_circle, color: Colors.green, size: 16),
+                            SizedBox(width: 8),
+                            Text(
+                              'Traffic Clearance Requested',
+                              style: TextStyle(
+                                color: Colors.green,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _isCompletingTrip ? null : _completeTrip,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: _isCompletingTrip
+                            ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                            : const Text(
+                          'COMPLETE TRIP',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
-              ),
-            ),
-
-          // NEW: Complete Trip Button
-          Positioned(
-            bottom: 150,
-            left: 16,
-            right: 16,
-            child: ElevatedButton.icon(
-              onPressed: _isCompletingTrip ? null : _completeTrip,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 8,
-              ),
-              icon: _isCompletingTrip
-                  ? const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2,
-                ),
-              )
-                  : const Icon(Icons.check_circle, size: 24),
-              label: Text(
-                _isCompletingTrip ? 'COMPLETING...' : 'COMPLETE TRIP',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-
-          // Clear traffic button
-          Positioned(
-            bottom: 80,
-            left: 16,
-            right: 16,
-            child: ElevatedButton(
-              onPressed: _isTrafficClearing ? null : _clearTraffic,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 8,
-              ),
-              child: _isTrafficClearing
-                  ? const SizedBox(
-                height: 24,
-                width: 24,
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2,
-                ),
-              )
-                  : Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(Icons.warning, size: 24),
-                  SizedBox(width: 8),
-                  Text(
-                    'CLEAR TRAFFIC',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
               ),
             ),
           ),
@@ -1301,31 +1101,27 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     );
   }
 
-  Widget _buildInfoCard(String text, bool isDark) {
-    return Expanded(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isDark ? Colors.grey[850] : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Text(
-          text,
-          textAlign: TextAlign.center,
+  Widget _buildStatItem(IconData icon, String label, String value) {
+    return Column(
+      children: [
+        Icon(icon, color: Colors.red, size: 24),
+        const SizedBox(height: 4),
+        Text(
+          label,
           style: const TextStyle(
-            fontSize: 16,
+            fontSize: 12,
+            color: Colors.grey,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 14,
             fontWeight: FontWeight.bold,
           ),
         ),
-      ),
+      ],
     );
   }
 }

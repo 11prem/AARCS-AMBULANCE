@@ -1,3 +1,5 @@
+// lib/screens/dashboard.dart (Traffic Police)
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:math';
@@ -6,6 +8,7 @@ import 'emergency_response_screen.dart';
 import 'history_screen.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
+import '../models/priority_model.dart'; // ✅ ADDED: Import priority model
 
 // Firebase Police Service for real-time data
 class FirebasePoliceService {
@@ -61,7 +64,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
       });
     });
 
-    // Start listening for Firebase emergency requests
     _listenToEmergencyRequests();
   }
 
@@ -72,6 +74,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     super.dispose();
   }
 
+  // ✅ UPDATED: Filter to show only highest priority ambulance
   void _listenToEmergencyRequests() {
     print('🚓 Traffic Police: Starting to listen for emergency requests...');
 
@@ -85,10 +88,12 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         print('🚓 Raw data: ${event.snapshot.value}');
 
         final requests = Map<String, dynamic>.from(
-            event.snapshot.value as Map);
+            event.snapshot.value as Map<dynamic, dynamic>);
+
         print('🚓 Number of requests: ${requests.length}');
 
         final pendingRequests = <String, Map<String, dynamic>>{};
+
         requests.forEach((key, value) {
           final requestData = Map<String, dynamic>.from(value);
           final status = requestData['status']?.toString() ?? '';
@@ -103,23 +108,38 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         print('🚓 Filtered pending requests: ${pendingRequests.length}');
 
         if (pendingRequests.isNotEmpty) {
+          // ✅ CRITICAL CHANGE: Sort by priority first (lower index = higher priority)
+          // Then by timestamp for same priority
           var sortedEntries = pendingRequests.entries.toList()
             ..sort((a, b) {
+              // Get priority (default to 3 = low if missing)
+              final priorityA = a.value['priority'] ?? 3;
+              final priorityB = b.value['priority'] ?? 3;
+
+              // Lower priority index = higher priority (0=critical is highest)
+              if (priorityA != priorityB) {
+                return (priorityA as num).compareTo(priorityB as num);
+              }
+
+              // If same priority, sort by timestamp (newer first)
               final timestampA = a.value['timestamp'] ?? 0;
               final timestampB = b.value['timestamp'] ?? 0;
               return (timestampB as num).compareTo(timestampA as num);
             });
 
-          final latestEntry = sortedEntries.first;
-          final requestId = latestEntry.key;
-          final requestData = latestEntry.value;
+          // ✅ ONLY show the highest priority request (first in sorted list)
+          final highestPriorityEntry = sortedEntries.first;
+          final requestId = highestPriorityEntry.key;
+          final requestData = highestPriorityEntry.value;
 
+          // Check if this is already being displayed
           if (currentRequestId == requestId && hasActiveEmergencyRequest) {
             print('🚓 Request $requestId already being displayed, skipping...');
             return;
           }
 
-          print('🚓 Processing NEW request: $requestId');
+          print('🚓 Processing HIGHEST PRIORITY request: $requestId');
+          print('🚓 Priority: ${requestData['priority']} (${requestData['priorityLabel']})');
           print('🚓 Destination: ${requestData['destination']}');
 
           setState(() {
@@ -130,7 +150,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
             final sourceCoords = requestData['sourceCoords'] is Map
                 ? Map<String, dynamic>.from(requestData['sourceCoords'])
                 : null;
-
             final destCoords = requestData['destCoords'] is Map
                 ? Map<String, dynamic>.from(requestData['destCoords'])
                 : null;
@@ -141,6 +160,8 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
               'destination': requestData['destination'] ?? 'Unknown',
               'eta': requestData['eta'] ?? 'Calculating...',
               'distance': requestData['distance'] ?? 'N/A',
+              'priority': requestData['priority'] ?? 3, // ✅ ADDED: Store priority
+              'priorityLabel': requestData['priorityLabel'] ?? 'LOW', // ✅ ADDED: Store priority label
               'sourceCoords': sourceCoords,
               'destCoords': destCoords,
             };
@@ -154,8 +175,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                        '🚨 Emergency: ${requestData['ambulanceId']} → ${requestData['destination']}'
-                    ),
+                        '🚨 ${requestData['priorityLabel']} PRIORITY: ${requestData['ambulanceId']} → ${requestData['destination']}'),
                   ),
                 ],
               ),
@@ -203,7 +223,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
               children: [
                 _buildDashboardTab(),
                 _buildHistoryTab(),
-                _buildProfileTab(),  // ✅ FIXED: Changed from buildProfileTab()
+                _buildProfileTab(),
               ],
             ),
           ),
@@ -417,13 +437,18 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     );
   }
 
+  // ✅ UPDATED: Show priority in emergency request card
   Widget _buildEmergencyRequestCard() {
+    // ✅ ADDED: Get priority configuration
+    final priority = EmergencyPriority.values[currentEmergencyRequest!['priority'] ?? 3];
+    final priorityConfig = PriorityConfig.fromPriority(priority);
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.red, width: 2),
+        border: Border.all(color: priorityConfig.color, width: 2), // ✅ CHANGED: Use priority color
         boxShadow: [
           BoxShadow(
             color: Colors.grey.withOpacity(0.1),
@@ -439,7 +464,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.red.withOpacity(0.1),
+              color: priorityConfig.backgroundColor, // ✅ CHANGED: Use priority color
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(10),
                 topRight: Radius.circular(10),
@@ -450,35 +475,36 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: Colors.red,
+                    color: priorityConfig.color,
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: const Icon(
-                    Icons.medical_services,
+                  child: Icon(
+                    priorityConfig.icon, // ✅ CHANGED: Use priority icon
                     color: Colors.white,
                     size: 16,
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Text(
+                Text(
                   'EMERGENCY REQUEST',
                   style: TextStyle(
-                    color: Colors.red,
+                    color: priorityConfig.color,
                     fontWeight: FontWeight.bold,
                     fontSize: 14,
                   ),
                 ),
                 const Spacer(),
+                // ✅ ADDED: Priority badge
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                    color: Colors.red,
+                    color: priorityConfig.color,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Text(
-                    'URGENT',
-                    style: TextStyle(
+                  child: Text(
+                    priorityConfig.label,
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
@@ -520,7 +546,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                       _navigateToEmergencyResponse();
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
+                      backgroundColor: priorityConfig.color, // ✅ CHANGED: Use priority color
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
@@ -633,14 +659,12 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
   }
 
   Widget _buildHistoryTab() {
-    // ✅ FIXED: Pass null for ambulanceId to show ALL trips for traffic police
     return const HistoryScreen(
       ambulanceId: null,
       showAppBar: false,
     );
   }
 
-  // ✅ ADDED: Missing _buildProfileTab method
   Widget _buildProfileTab() {
     return Center(
       child: Column(
@@ -677,7 +701,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     );
   }
 
-  // ✅ ADDED: Missing _navigateToEmergencyResponse method
   void _navigateToEmergencyResponse() async {
     if (currentEmergencyRequest != null && currentRequestId != null) {
       try {
@@ -685,11 +708,9 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         print('🚓 Request ID: $currentRequestId');
         print('🚓 Emergency Request data: $currentEmergencyRequest');
 
-        // IMPORTANT: Store the data locally BEFORE accepting
         final requestDataCopy = Map<String, dynamic>.from(currentEmergencyRequest!);
         final requestIdCopy = currentRequestId!;
 
-        // Clear the UI immediately to prevent duplicate clicks
         setState(() {
           hasActiveEmergencyRequest = false;
           hasEmergencyAlert = false;
@@ -697,11 +718,9 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           currentRequestId = null;
         });
 
-        // Accept the request in Firebase (this changes status to 'accepted')
         await FirebasePoliceService.acceptRequest(requestIdCopy);
         print('✅ Request accepted in Firebase');
 
-        // Navigate to emergency response screen with the COPIED data
         if (mounted) {
           Navigator.push(
             context,
@@ -712,7 +731,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
             ),
           );
 
-          // Show success message
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('✅ Route clearance accepted'),

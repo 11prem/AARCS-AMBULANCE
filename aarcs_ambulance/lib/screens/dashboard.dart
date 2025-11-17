@@ -6,10 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'route_navigation.dart';
-import 'history_screen.dart';  // Import history screen
+import 'history_screen.dart';
 import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
+import '../models/priority_model.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
@@ -27,22 +28,21 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _destinationController = TextEditingController();
+  final TextEditingController _justificationController = TextEditingController();
   bool _isButtonPressed = false;
   bool _isLoading = false;
   Position? _currentPosition;
   List<Map<String, dynamic>> nearbyHospitals = [];
   Timer? _debounce;
-
-  // Suggestions from Google Places Autocomplete
   List<dynamic> _searchSuggestions = [];
-
-  // Tab controller for Dashboard and History tabs
   late TabController _tabController;
 
-  // Put your real API key here (or load from env)
+  // Selected hospital for priority selection
+  Map<String, dynamic>? _selectedHospital;
+
   final String _googleApiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
 
-  // Enhanced filtering keywords for emergency and general hospitals only
+  // Enhanced filtering keywords
   final List<String> _allowedNameKeywords = [
     'hospital',
     'multi specialty',
@@ -63,7 +63,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     'annai theresa hospital'
   ];
 
-  // Keywords to EXCLUDE specialized clinics and non-emergency facilities
   final List<String> _excludeKeywords = [
     'dental', 'ortho', 'orthopedic', 'orthopedic',
     'skin', 'dermatology', 'cosmetic', 'beauty',
@@ -80,7 +79,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     'nursing home', 'derby','medicity'
   ];
 
-  // Keywords to identify hospital suggestions for autocomplete
   final List<String> _hospitalKeywords = [
     'hospital',
     'speciality',
@@ -142,32 +140,23 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     }
   }
 
-  // Enhanced hospital filtering function
   bool _isValidHospital(String name, List<dynamic> types) {
     final String nameLower = name.toLowerCase();
-
-    // First, check if it contains any excluded keywords
     for (String excludeKeyword in _excludeKeywords) {
       if (nameLower.contains(excludeKeyword.toLowerCase())) {
         return false;
       }
     }
 
-    // Check if it's a valid hospital based on name
     bool nameMatch = _allowedNameKeywords.any((kw) => nameLower.contains(kw.toLowerCase()));
-
-    // Check if it's a valid hospital based on Google Places types
     bool typeMatch = types.any((type) =>
     type.contains('hospital') ||
         type.contains('health') ||
         type.contains('establishment')
     );
-
-    // Must have either name match or be classified as hospital by Google
     return nameMatch || (typeMatch && !nameLower.contains('clinic'));
   }
 
-  // NEW: Function to get detailed place information including opening hours
   Future<Map<String, dynamic>?> _getPlaceDetails(String placeId) async {
     final detailsUrl = Uri.parse(
         'https://maps.googleapis.com/maps/api/place/details/json'
@@ -175,7 +164,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             '&fields=opening_hours,current_opening_hours'
             '&key=$_googleApiKey'
     );
-
     try {
       final resp = await http.get(detailsUrl);
       if (resp.statusCode == 200) {
@@ -190,9 +178,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     return null;
   }
 
-  // NEW: Function to determine opening status from opening hours data
   Map<String, dynamic> _getOpeningStatus(Map<String, dynamic>? openingHours, Map<String, dynamic>? currentOpeningHours) {
-    // Check current_opening_hours first (more accurate for current status)
     if (currentOpeningHours != null && currentOpeningHours.containsKey('open_now')) {
       return {
         'isOpen': currentOpeningHours['open_now'] as bool,
@@ -200,7 +186,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       };
     }
 
-    // Fallback to regular opening_hours
     if (openingHours != null && openingHours.containsKey('open_now')) {
       return {
         'isOpen': openingHours['open_now'] as bool,
@@ -208,7 +193,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       };
     }
 
-    // No opening hours data available
     return {
       'isOpen': false,
       'isKnown': false,
@@ -230,7 +214,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         '&radius=10000'
         '&type=hospital'
         '&key=$_googleApiKey';
-
     try {
       setState(() => _isLoading = true);
       final resp = await http.get(Uri.parse(placesUrl));
@@ -243,8 +226,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
       final data = json.decode(resp.body);
       final results = (data['results'] as List?) ?? [];
-      final List<Map<String, dynamic>> hospitals = [];
 
+      final List<Map<String, dynamic>> hospitals = [];
       for (var place in results) {
         final geometry = place['geometry'];
         final loc = geometry?['location'];
@@ -269,7 +252,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           }
         }
 
-        // Enhanced filtering - only include valid emergency/general hospitals
         if (!_isValidHospital(name, types)) {
           continue;
         }
@@ -281,17 +263,14 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           lng,
         );
 
-        // NEW: Get opening hours information
         Map<String, dynamic> openingStatus = {
           'isOpen': false,
           'isKnown': false,
         };
 
-        // First check if basic opening_hours is available in nearby search response
         if (place['opening_hours'] != null) {
           openingStatus = _getOpeningStatus(place['opening_hours'], null);
         } else {
-          // If not available in nearby search, fetch detailed place information
           final placeDetails = await _getPlaceDetails(placeId);
           if (placeDetails != null) {
             openingStatus = _getOpeningStatus(
@@ -325,74 +304,30 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       hospitals.sort((a, b) => (a['distance_m'] as double).compareTo(b['distance_m'] as double));
       final limited = hospitals.take(10).toList();
 
-      try {
-        final origin = '${_currentPosition!.latitude},${_currentPosition!.longitude}';
-        final destinations = limited.map((h) => '${h['lat']},${h['lng']}').join('|');
-        final dmUrl = Uri.parse(
-            'https://maps.googleapis.com/maps/api/distancematrix/json'
-                '?origins=$origin'
-                '&destinations=$destinations'
-                '&key=$_googleApiKey'
-                '&mode=driving'
-                '&units=metric'
-        );
-
-        final dmResp = await http.get(dmUrl);
-        if (dmResp.statusCode == 200) {
-          final dmData = json.decode(dmResp.body);
-          if ((dmData['rows'] is List) && dmData['rows'].isNotEmpty) {
-            final elements = (dmData['rows'][0]['elements'] as List?) ?? [];
-            for (int i = 0; i < limited.length && i < elements.length; i++) {
-              final el = elements[i];
-              final durationText = (el['duration'] != null) ? el['duration']['text'] : '--';
-              final distanceTxt = (el['distance'] != null) ? el['distance']['text'] : limited[i]['distance_text'];
-              limited[i]['duration_text'] = durationText;
-              limited[i]['distance_text'] = distanceTxt;
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('Distance Matrix failed: $e');
-        for (var h in limited) {
-          h['duration_text'] = '--';
-        }
-      }
-
       setState(() {
         nearbyHospitals = limited;
       });
     } catch (e) {
       debugPrint('Error fetching hospitals: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Something went wrong while fetching hospitals")),
-      );
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  // Enhanced autocomplete with hospital filtering
-  Future<void> _fetchSearchSuggestions(String input) async {
-    if (input.isEmpty) {
+  Future<void> _fetchSearchSuggestions(String query) async {
+    if (query.isEmpty) {
       setState(() => _searchSuggestions = []);
       return;
     }
 
-    if (_currentPosition == null) {
-      debugPrint('Current position not available for autocomplete');
-      setState(() => _searchSuggestions = []);
-      return;
-    }
+    if (_currentPosition == null) return;
 
     final url = Uri.parse(
-      'https://maps.googleapis.com/maps/api/place/autocomplete/json'
-          '?input=$input'
-          '&types=establishment'
-          '&keyword=hospital'
-          '&location=${_currentPosition!.latitude},${_currentPosition!.longitude}'
-          '&radius=15000'
-          '&strictbounds'
-          '&key=$_googleApiKey',
+        'https://maps.googleapis.com/maps/api/place/autocomplete/json?'
+            'input=$query'
+            '&location=${_currentPosition!.latitude},${_currentPosition!.longitude}'
+            '&radius=15000'
+            '&key=$_googleApiKey'
     );
 
     try {
@@ -401,109 +336,284 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         final data = json.decode(resp.body);
         final predictions = (data['predictions'] as List?) ?? [];
 
-        final hospitalSuggestions = predictions.where((prediction) {
-          final description = (prediction['description'] ?? '').toString().toLowerCase();
-          final types = (prediction['types'] as List?) ?? [];
-
-          // Enhanced filtering for autocomplete suggestions
-          return _isValidHospital(description, types.map((e) => e.toString()).toList());
+        final filtered = predictions.where((pred) {
+          final desc = (pred['description'] ?? '').toString().toLowerCase();
+          return _hospitalKeywords.any((kw) => desc.contains(kw));
         }).toList();
 
-        setState(() {
-          _searchSuggestions = hospitalSuggestions;
-        });
-      } else {
-        debugPrint('Autocomplete API error: ${resp.statusCode} - ${resp.body}');
-        setState(() => _searchSuggestions = []);
+        setState(() => _searchSuggestions = filtered);
       }
     } catch (e) {
-      debugPrint('Autocomplete error: $e');
-      setState(() => _searchSuggestions = []);
+      debugPrint('Error fetching suggestions: $e');
     }
   }
 
-  void _openRouteScreenWithHospital(Map<String, dynamic> hospital) async {
-    print('🔥 Hospital card tapped: ${hospital['name']}');
-    if (_currentPosition == null) {
-      print('❌ Current position is null');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Current location not available')),
-      );
-      return;
-    }
+  // ✅ NEW: Show priority selection bottom sheet
+  void _showPrioritySelectionSheet(Map<String, dynamic> hospital) {
+    setState(() {
+      _selectedHospital = hospital;
+    });
 
-    try {
-      final String hospitalName = hospital['name']?.toString() ?? 'Unknown Hospital';
-      print('📍 Current: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
-      print('🏥 Destination: $hospitalName');
-      print('🏥 Coordinates: ${hospital['lat']}, ${hospital['lng']}');
-
-      // Navigate to route screen
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => RouteNavigationScreen(
-            ambulanceId: widget.ambulanceId,
-            destination: hospitalName,
-            destinationLat: hospital['lat'] as double,
-            destinationLng: hospital['lng'] as double,
-            onToggleTheme: widget.onToggleTheme,
-          ),
-        ),
-      );
-    } catch (e) {
-      print('❌ Error in _openRouteScreenWithHospital: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to navigate: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _buildPrioritySelectionBottomSheet(),
+    );
   }
 
-  void _openRouteScreenFromInput() async {
-    final text = _destinationController.text.trim();
-    if (text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter destination name or coordinates')),
-      );
-      return;
-    }
+  // ✅ NEW: Priority selection bottom sheet UI
+  Widget _buildPrioritySelectionBottomSheet() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(20),
+          topRight: Radius.circular(20),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Select Emergency Priority',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Destination: ${_selectedHospital!['name']}',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[600],
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 16),
+            ...EmergencyPriority.values.map((priority) {
+              final config = PriorityConfig.fromPriority(priority);
 
-    if (_currentPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Current location not available')),
-      );
-      return;
-    }
+              return GestureDetector(
+                onTap: () {
+                  // ✅ ANTI-MISUSE: Show verification for CRITICAL priority
+                  if (priority == EmergencyPriority.critical) {
+                    _showCriticalPriorityVerification(priority);
+                  } else {
+                    _startNavigationWithPriority(priority);
+                  }
+                },
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: config.backgroundColor,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: config.color, width: 2),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(config.icon, color: config.color, size: 28),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              config.label,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: config.color,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              config.description,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.arrow_forward_ios,
+                        color: config.color,
+                        size: 18,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
 
-    // Handle lat/lng coordinates
-    final latLngMatch = RegExp(r'^\s*([-+]?\d+(\.\d+)?),\s*([-+]?\d+(\.\d+)?)\s*$')
-        .firstMatch(text);
-    if (latLngMatch != null) {
-      final lat = double.tryParse(latLngMatch.group(1)!);
-      final lng = double.tryParse(latLngMatch.group(3)!);
-      if (lat == null || lng == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid coordinates')),
-        );
-        return;
-      }
+  // ✅ NEW: Critical priority verification with justification
+  void _showCriticalPriorityVerification(EmergencyPriority priority) {
+    Navigator.pop(context); // Close priority sheet
 
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => RouteNavigationScreen(
-            ambulanceId: widget.ambulanceId,
-            destination: text,
-            destinationLat: lat,
-            destinationLng: lng,
-            onToggleTheme: widget.onToggleTheme,
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red, size: 28),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'CRITICAL Priority Verification',
+                style: TextStyle(fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red[200]!),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '⚠️ CRITICAL Priority is for:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.red,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      '• Cardiac arrest\n'
+                          '• Severe trauma/bleeding\n'
+                          '• Unconscious patient\n'
+                          '• Respiratory failure\n'
+                          '• Stroke symptoms',
+                      style: TextStyle(fontSize: 12, color: Colors.black87),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Provide justification for CRITICAL priority:',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _justificationController,
+                maxLines: 3,
+                maxLength: 150,
+                decoration: InputDecoration(
+                  hintText: 'Describe the emergency condition...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  contentPadding: const EdgeInsets.all(12),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: Colors.orange),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Misuse will be logged and reported',
+                        style: TextStyle(fontSize: 11, color: Colors.orange),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
-      );
-      return;
+        actions: [
+          TextButton(
+            onPressed: () {
+              _justificationController.clear();
+              Navigator.pop(context);
+              // Show priority sheet again
+              _showPrioritySelectionSheet(_selectedHospital!);
+            },
+            child: const Text('CANCEL'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final justification = _justificationController.text.trim();
+              if (justification.isEmpty || justification.length < 10) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please provide a valid justification (min 10 characters)'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+
+              Navigator.pop(context);
+              _startNavigationWithPriority(priority, justification: justification);
+              _justificationController.clear();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('CONFIRM', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ✅ NEW: Start navigation with selected priority
+  void _startNavigationWithPriority(EmergencyPriority priority, {String? justification}) {
+    if (_selectedHospital == null) return;
+
+    // Log critical priority usage
+    if (priority == EmergencyPriority.critical && justification != null) {
+      _logCriticalPriorityUsage(justification);
     }
 
     Navigator.push(
@@ -511,175 +621,174 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       MaterialPageRoute(
         builder: (_) => RouteNavigationScreen(
           ambulanceId: widget.ambulanceId,
-          destination: text,
-          destinationLat: null,
-          destinationLng: null,
+          destination: _selectedHospital!['name'],
+          destinationLat: _selectedHospital!['lat'],
+          destinationLng: _selectedHospital!['lng'],
           onToggleTheme: widget.onToggleTheme,
+          priority: priority,
         ),
       ),
     );
   }
 
-  // UPDATED GRADIENT CARD WITH ACCURATE OPENING STATUS
-  Widget _buildHospitalCard(Map<String, dynamic> hospital) {
-    final name = hospital['name'] ?? '--';
-    final distanceText = (hospital['distance_text'] ?? '--').toString();
-    final durationText = (hospital['duration_text'] ?? '--').toString();
-    final rating = hospital['rating'] ?? 0.0;
-    final bool isOpen = hospital['isOpen'] ?? false;
-    final bool isStatusKnown = hospital['isOpeningStatusKnown'] ?? false;
+  // ✅ NEW: Log critical priority usage to Firebase for monitoring
+  Future<void> _logCriticalPriorityUsage(String justification) async {
+    try {
+      final logsRef = FirebaseDatabase.instanceFor(
+        app: Firebase.app(),
+        databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+      ).ref().child('critical_priority_logs').push();
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.red.shade50,
-            Colors.white,
-            Colors.blue.shade50,
-          ],
-          stops: const [0.0, 0.5, 1.0],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => _openRouteScreenWithHospital(hospital),
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade100,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(Icons.local_hospital, color: Colors.red.shade600, size: 24),
+      await logsRef.set({
+        'ambulanceId': widget.ambulanceId,
+        'destination': _selectedHospital!['name'],
+        'justification': justification,
+        'timestamp': ServerValue.timestamp,
+        'location': 'Lat: ${_currentPosition?.latitude}, Lng: ${_currentPosition?.longitude}',
+      });
+
+      print('✅ Critical priority usage logged');
+    } catch (e) {
+      print('❌ Failed to log critical priority: $e');
+    }
+  }
+
+  Widget _buildHospitalCard(Map<String, dynamic> hospital) {
+    final String name = hospital['name'] ?? '';
+    final String address = hospital['address'] ?? '';
+    final double rating = hospital['rating'] ?? 0.0;
+    final String distance = hospital['distance_text'] ?? '';
+    final bool isOpen = hospital['isOpen'] ?? false;
+    final bool isOpenKnown = hospital['isOpeningStatusKnown'] ?? false;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      elevation: 2,
+      child: InkWell(
+        onTap: () {
+          _showPrioritySelectionSheet(hospital);
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                    child: Icon(
+                      Icons.local_hospital,
+                      color: Colors.red.shade700,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            color: Colors.black87,
                           ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Icon(Icons.star, size: 14, color: Colors.orange.shade600),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            if (rating > 0) ...[
+                              Icon(Icons.star, color: Colors.amber, size: 14),
                               const SizedBox(width: 4),
                               Text(
-                                rating > 0 ? rating.toStringAsFixed(1) : 'N/A',
-                                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                rating.toStringAsFixed(1),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                            ],
+                            if (isOpenKnown) ...[
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: isOpen ? Colors.green.shade50 : Colors.red.shade50,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  isOpen ? 'OPEN' : 'CLOSED',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: isOpen ? Colors.green.shade700 : Colors.red.shade700,
+                                  ),
+                                ),
                               ),
                             ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    // UPDATED: Dynamic status indicator based on actual opening hours
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: !isStatusKnown
-                            ? Colors.grey.shade100
-                            : isOpen
-                            ? Colors.green.shade100
-                            : Colors.red.shade100,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: !isStatusKnown
-                              ? Colors.grey.shade300
-                              : isOpen
-                              ? Colors.green.shade300
-                              : Colors.red.shade300,
-                        ),
-                      ),
-                      child: Text(
-                        !isStatusKnown
-                            ? 'UNKNOWN'
-                            : isOpen
-                            ? 'OPEN'
-                            : 'CLOSED',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: !isStatusKnown
-                              ? Colors.grey.shade700
-                              : isOpen
-                              ? Colors.green.shade700
-                              : Colors.red.shade700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Row(
-                          children: [
-                            Icon(Icons.directions_car, size: 16, color: Colors.blue.shade600),
-                            const SizedBox(width: 6),
-                            Text(
-                              distanceText,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.grey.shade700,
-                              ),
-                            ),
                           ],
                         ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade600,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          durationText,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                address,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.directions_car, size: 14, color: Colors.grey.shade600),
+                      const SizedBox(width: 4),
+                      Text(
+                        distance,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey.shade700,
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
-            ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade600,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text(
+                      'Select',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -687,118 +796,103 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   }
 
   Widget _buildDashboardTab() {
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Destination input with enhanced autocomplete
-          TextField(
-            controller: _destinationController,
-            onChanged: (value) {
-              if (_debounce?.isActive ?? false) _debounce!.cancel();
-              _debounce = Timer(const Duration(milliseconds: 500), () {
-                _fetchSearchSuggestions(value);
-              });
-            },
-            decoration: InputDecoration(
-              hintText: "Enter hospital destination",
-              prefixIcon: const Icon(Icons.search, color: Colors.grey),
-              contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-
-          // Search suggestions dropdown
-          if (_searchSuggestions.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(top: 4),
-              constraints: const BoxConstraints(maxHeight: 200),
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: BorderRadius.circular(8),
-                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
-              ),
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: _searchSuggestions.length,
-                itemBuilder: (context, index) {
-                  final suggestion = _searchSuggestions[index];
-                  final description = suggestion['description'] ?? '';
-                  return ListTile(
-                    title: Text(
-                      description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onTap: () async {
-                      _destinationController.text = description;
-                      setState(() => _searchSuggestions = []);
-
-                      final placeId = suggestion['place_id'];
-                      final detailsUrl = Uri.parse(
-                        'https://maps.googleapis.com/maps/api/place/details/json'
-                            '?place_id=$placeId&key=$_googleApiKey',
-                      );
-
-                      final detailsResp = await http.get(detailsUrl);
-                      if (detailsResp.statusCode == 200) {
-                        final detailsData = json.decode(detailsResp.body);
-                        final loc = detailsData['result']['geometry']['location'];
-                        final double lat = (loc['lat'] as num).toDouble();
-                        final double lng = (loc['lng'] as num).toDouble();
-
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => RouteNavigationScreen(
-                              ambulanceId: widget.ambulanceId,
-                              destination: description,
-                              destinationLat: lat,
-                              destinationLng: lng,
-                              onToggleTheme: widget.onToggleTheme,
-                            ),
-                          ),
-                        );
-                      }
-                    },
-                  );
-                },
-              ),
-            ),
-
-          const SizedBox(height: 12),
-
-          // Start Trip button
-          GestureDetector(
-            onTapDown: (_) => setState(() => _isButtonPressed = true),
-            onTapUp: (_) {
-              Future.delayed(const Duration(milliseconds: 120), () {
-                setState(() => _isButtonPressed = false);
-                _openRouteScreenFromInput();
-              });
-            },
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              height: 48,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: _isButtonPressed ? Colors.red.shade700 : Colors.red,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              alignment: Alignment.center,
-              child: const Text('Start Trip', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ),
-
-          const SizedBox(height: 18),
-
-          // Nearby Hospitals header
-          Row(
+    return Column(
+      children: [
+        // Search bar at top
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
             children: [
-              const Text('Nearby Hospitals', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              TextField(
+                controller: _destinationController,
+                onChanged: (value) {
+                  if (_debounce?.isActive ?? false) _debounce!.cancel();
+                  _debounce = Timer(const Duration(milliseconds: 500), () {
+                    _fetchSearchSuggestions(value);
+                  });
+                },
+                decoration: InputDecoration(
+                  hintText: "Search hospital destination",
+                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                  suffixIcon: _destinationController.text.isNotEmpty
+                      ? IconButton(
+                    icon: const Icon(Icons.clear, color: Colors.grey),
+                    onPressed: () {
+                      _destinationController.clear();
+                      setState(() => _searchSuggestions = []);
+                    },
+                  )
+                      : null,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+
+              // Search suggestions dropdown
+              if (_searchSuggestions.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(top: 8),
+                  constraints: const BoxConstraints(maxHeight: 200),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor,
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                  ),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _searchSuggestions.length,
+                    itemBuilder: (context, index) {
+                      final suggestion = _searchSuggestions[index];
+                      final description = suggestion['description'] ?? '';
+                      return ListTile(
+                        title: Text(
+                          description,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () async {
+                          _destinationController.text = description;
+                          setState(() => _searchSuggestions = []);
+
+                          final placeId = suggestion['place_id'];
+                          final detailsUrl = Uri.parse(
+                            'https://maps.googleapis.com/maps/api/place/details/json'
+                                '?place_id=$placeId&key=$_googleApiKey',
+                          );
+                          final detailsResp = await http.get(detailsUrl);
+                          if (detailsResp.statusCode == 200) {
+                            final detailsData = json.decode(detailsResp.body);
+                            final loc = detailsData['result']['geometry']['location'];
+                            final double lat = (loc['lat'] as num).toDouble();
+                            final double lng = (loc['lng'] as num).toDouble();
+
+                            _showPrioritySelectionSheet({
+                              'name': description,
+                              'lat': lat,
+                              'lng': lng,
+                              'address': description,
+                              'rating': 0.0,
+                              'distance_text': 'N/A',
+                            });
+                          }
+                        },
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+
+        // Nearby Hospitals header
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              const Text(
+                'Nearby Hospitals',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
               const Spacer(),
               IconButton(
                 tooltip: 'Refresh nearby hospitals',
@@ -807,33 +901,35 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
               ),
             ],
           ),
+        ),
 
-          const SizedBox(height: 6),
-
-          // Hospital list with Expanded to fill remaining space
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : nearbyHospitals.isEmpty
-                ? const Center(child: Text('No emergency hospitals found nearby', style: TextStyle(color: Colors.grey)))
-                : ListView.builder(
-              padding: EdgeInsets.zero,
-              itemCount: nearbyHospitals.length,
-              itemBuilder: (context, index) {
-                final hospital = nearbyHospitals[index];
-                return _buildHospitalCard(hospital);
-              },
+        // Hospital list
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : nearbyHospitals.isEmpty
+              ? const Center(
+            child: Text(
+              'No emergency hospitals found nearby',
+              style: TextStyle(color: Colors.grey),
             ),
+          )
+              : ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: nearbyHospitals.length,
+            itemBuilder: (context, index) {
+              final hospital = nearbyHospitals[index];
+              return _buildHospitalCard(hospital);
+            },
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.red,
@@ -883,7 +979,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           children: [
             _buildDashboardTab(),
             HistoryScreen(
-              ambulanceId: widget.ambulanceId, // ✅ THIS IS THE CRITICAL LINE
+              ambulanceId: widget.ambulanceId,
               showAppBar: false,
             ),
           ],
@@ -896,6 +992,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   void dispose() {
     _debounce?.cancel();
     _destinationController.dispose();
+    _justificationController.dispose();
     _tabController.dispose();
     super.dispose();
   }
