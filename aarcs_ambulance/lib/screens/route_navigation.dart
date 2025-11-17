@@ -64,6 +64,7 @@ class FirebaseAmbulanceService {
 
       print('✅ Firebase write SUCCESS!');
       print('   Request ID: $requestId');
+
       return requestId;
     } catch (e) {
       print('❌ Firebase write FAILED: $e');
@@ -88,6 +89,7 @@ class RouteProgressHelper {
             math.cos(lat2Rad) *
             math.sin(deltaLngRad / 2) *
             math.sin(deltaLngRad / 2);
+
     double c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
     return _earthRadius * c;
   }
@@ -105,7 +107,6 @@ class RouteProgressHelper {
         nearestIndex = i;
       }
     }
-
     return nearestIndex;
   }
 }
@@ -136,17 +137,24 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   bool _hasCompletedTrip = false;
   String? _activeRequestId;
   bool _isCompletingTrip = false;
+
+  // ✅ Track if navigation has started
+  bool _hasStartedNavigation = false;
+
   GoogleMapController? _mapController;
   Position? _currentPosition;
   Set<Polyline> _polylines = {};
   Set<Marker> _markers = {};
+
   String _eta = "--";
   String _distance = "--";
   double _currentSpeed = 0.0;
   bool _isLocationActive = false;
   bool _isTrafficClearing = false;
+
   bool _isLoading = true;
   String? _errorMessage;
+
   BitmapDescriptor? _ambulanceIcon;
   double _currentZoom = 18.5;
 
@@ -162,11 +170,13 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   // Route progress tracking with dual polylines
   List<LatLng> _routePoints = [];
   int _currentRoutePointIndex = 0;
+
   Timer? _routeUpdateTimer;
   Timer? _instructionDismissTimer;
   bool _showInstructionCard = true;
 
   final String _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
+
   StreamSubscription<Position>? _positionSubscription;
 
   @override
@@ -196,19 +206,74 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
+  // ✅ Don't auto-start navigation
   Future<void> _initializeNavigation() async {
     setState(() => _isLoading = true);
-
     await _determinePosition();
     await _getDirectionsAndRoute();
 
-    if (_currentPosition != null) {
-      _startLocationTracking();
-      _startNavigationMode();
-    }
+    // ✅ Fit map bounds to show full route
+    _fitMapBounds();
 
     setState(() => _isLoading = false);
   }
+
+  // ✅ NEW: Fit map to show entire route
+  void _fitMapBounds() {
+    if (_mapController == null || _routePoints.isEmpty) return;
+
+    double minLat = _routePoints.first.latitude;
+    double maxLat = _routePoints.first.latitude;
+    double minLng = _routePoints.first.longitude;
+    double maxLng = _routePoints.first.longitude;
+
+    for (var point in _routePoints) {
+      if (point.latitude < minLat) minLat = point.latitude;
+      if (point.latitude > maxLat) maxLat = point.latitude;
+      if (point.longitude < minLng) minLng = point.longitude;
+      if (point.longitude > maxLng) maxLng = point.longitude;
+    }
+
+    LatLngBounds bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
+
+    _mapController!.animateCamera(
+      CameraUpdate.newLatLngBounds(bounds, 100), // 100 is padding
+    );
+  }
+
+  // ✅ Handle Start Navigation button click
+  // ✅ Handle Start Navigation button click
+  void _onStartNavigation() async {
+    setState(() {
+      _hasStartedNavigation = true;
+    });
+
+    // ✅ Send route request to Firebase (but NOT traffic clearance yet)
+    final requestId = await FirebaseAmbulanceService.sendRouteRequest(
+      ambulanceId: widget.ambulanceId,
+      destinationName: widget.destination,
+      currentLat: _currentPosition!.latitude,
+      currentLng: _currentPosition!.longitude,
+      destLat: widget.destinationLat!,
+      destLng: widget.destinationLng!,
+      eta: _eta,
+      distance: _distance,
+      priority: widget.priority,
+    );
+
+    if (requestId != null) {
+      _activeRequestId = requestId;
+      // ✅ DO NOT set _isTrafficClearing = true here
+      // User must click "CLEAR TRAFFIC" button manually
+    }
+
+    _startLocationTracking();
+    _startNavigationMode();
+  }
+
 
   Future<void> _determinePosition() async {
     try {
@@ -269,6 +334,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+
         if (data['status'] == 'OK' && data['routes'].isNotEmpty) {
           final route = data['routes'][0];
           final leg = route['legs'][0];
@@ -291,25 +357,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               if (_routeSteps.length > 1) {
                 _nextInstruction = _cleanHtmlTags(_routeSteps[1]['html_instructions']);
               }
-            });
-          }
-
-          final requestId = await FirebaseAmbulanceService.sendRouteRequest(
-            ambulanceId: widget.ambulanceId,
-            destinationName: widget.destination,
-            currentLat: _currentPosition!.latitude,
-            currentLng: _currentPosition!.longitude,
-            destLat: widget.destinationLat!,
-            destLng: widget.destinationLng!,
-            eta: _eta,
-            distance: _distance,
-            priority: widget.priority,
-          );
-
-          if (requestId != null) {
-            _activeRequestId = requestId;
-            setState(() {
-              _isTrafficClearing = true;
             });
           }
         }
@@ -588,37 +635,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
-  LatLng _snapToRoute(LatLng currentLocation) {
-    if (_routePoints.isEmpty) {
-      return currentLocation;
-    }
-
-    double minDistance = double.infinity;
-    LatLng nearestPoint = currentLocation;
-
-    for (int i = 0; i < _routePoints.length; i++) {
-      double distance = RouteProgressHelper.distanceHaversine(
-        currentLocation,
-        _routePoints[i],
-      );
-
-      if (distance < minDistance) {
-        minDistance = distance;
-        nearestPoint = _routePoints[i];
-      }
-    }
-
-    if (minDistance < 50.0) {
-      print('📍 Snapped to route (${minDistance.toStringAsFixed(1)}m away)');
-      return nearestPoint;
-    }
-
-    print('⚠️ Too far from route (${minDistance.toStringAsFixed(1)}m), using GPS');
-    return currentLocation;
-  }
-
   Future<void> _sendLocationToFirebase() async {
-    if (_currentPosition == null) return;
+    if (_currentPosition == null || !_hasStartedNavigation) return;
 
     try {
       final requestQuery = await FirebaseDatabase.instanceFor(
@@ -634,7 +652,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       if (requestQuery.snapshot.value != null) {
         final requests = requestQuery.snapshot.value as Map;
         final requestId = requests.keys.first;
-
         _activeRequestId = requestId;
 
         await FirebaseDatabase.instanceFor(
@@ -706,18 +723,14 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     });
   }
 
-  // ✅ FIXED: Properly cast num to double
   void _updateNavigationInstructions() {
     if (_routeSteps.isEmpty) return;
 
     for (int i = 0; i < _routeSteps.length; i++) {
       var step = _routeSteps[i];
-
-      // ✅ FIX: Properly cast num to double
       final startLocation = step['start_location'];
       final double stepLat = (startLocation['lat'] as num).toDouble();
       final double stepLng = (startLocation['lng'] as num).toDouble();
-
       LatLng stepLocation = LatLng(stepLat, stepLng);
 
       double distanceToStep = RouteProgressHelper.distanceHaversine(
@@ -788,30 +801,46 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
     final markers = <Marker>{};
 
-    if (_ambulanceIcon != null) {
-      markers.add(
-        Marker(
-          markerId: const MarkerId('ambulance'),
-          position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          icon: _ambulanceIcon!,
-          rotation: _currentBearing,
-          anchor: const Offset(0.5, 0.5),
-          flat: true,
-          infoWindow: InfoWindow(
-            title: 'Ambulance ${widget.ambulanceId}',
-            snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
+    // ✅ Show ambulance marker only when navigation has started
+    if (_hasStartedNavigation) {
+      if (_ambulanceIcon != null) {
+        markers.add(
+          Marker(
+            markerId: const MarkerId('ambulance'),
+            position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+            icon: _ambulanceIcon!,
+            rotation: _currentBearing,
+            anchor: const Offset(0.5, 0.5),
+            flat: true,
+            infoWindow: InfoWindow(
+              title: 'Ambulance ${widget.ambulanceId}',
+              snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
+            ),
           ),
-        ),
-      );
+        );
+      } else {
+        markers.add(
+          Marker(
+            markerId: const MarkerId('ambulance'),
+            position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+            infoWindow: InfoWindow(
+              title: 'Ambulance ${widget.ambulanceId}',
+              snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
+            ),
+          ),
+        );
+      }
     } else {
+      // ✅ Show starting point (current location) before navigation starts
       markers.add(
         Marker(
-          markerId: const MarkerId('ambulance'),
+          markerId: const MarkerId('start'),
           position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-          infoWindow: InfoWindow(
-            title: 'Ambulance ${widget.ambulanceId}',
-            snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+          infoWindow: const InfoWindow(
+            title: 'Starting Point',
+            snippet: 'Your current location',
           ),
         ),
       );
@@ -832,6 +861,50 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     setState(() {
       _markers = markers;
     });
+  }
+
+  // ✅ NEW: Clear traffic button action
+  Future<void> _onClearTraffic() async {
+    if (!_hasStartedNavigation) return;
+
+    setState(() {
+      _isTrafficClearing = true;
+    });
+
+    // Show feedback
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.traffic, color: Colors.white),
+            SizedBox(width: 8),
+            Expanded(child: Text('🚦 Traffic clearance signal sent!')),
+          ],
+        ),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    // Update Firebase with traffic clearance request
+    if (_activeRequestId != null) {
+      try {
+        await FirebaseDatabase.instanceFor(
+          app: Firebase.app(),
+          databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+        ).ref()
+            .child('emergency_requests')
+            .child(_activeRequestId!)
+            .update({
+          'trafficClearanceRequested': true,
+          'trafficClearanceTime': ServerValue.timestamp,
+        });
+
+        print('✅ Traffic clearance request sent to Firebase');
+      } catch (e) {
+        print('❌ Failed to send traffic clearance: $e');
+      }
+    }
   }
 
   @override
@@ -898,12 +971,16 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               target: _currentPosition != null
                   ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
                   : LatLng(widget.destinationLat ?? 0, widget.destinationLng ?? 0),
-              zoom: 18.5,
+              zoom: 14.0,
               bearing: 0,
-              tilt: 45.0,
+              tilt: 0,
             ),
             onMapCreated: (controller) {
               _mapController = controller;
+              // Fit bounds after map is created
+              Future.delayed(const Duration(milliseconds: 500), () {
+                _fitMapBounds();
+              });
             },
             markers: _markers,
             polylines: _polylines,
@@ -963,8 +1040,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             ),
           ),
 
-          // Navigation info card
-          if (_showInstructionCard && _currentInstruction.isNotEmpty)
+          // Navigation info card (only show when navigation has started)
+          if (_hasStartedNavigation && _showInstructionCard && _currentInstruction.isNotEmpty)
             Positioned(
               top: 110,
               left: 16,
@@ -1033,64 +1110,114 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                       children: [
                         _buildStatItem(Icons.timer, 'ETA', _eta),
                         _buildStatItem(Icons.route, 'Distance', _distance),
-                        _buildStatItem(Icons.speed, 'Speed', '${_currentSpeed.toStringAsFixed(0)} km/h'),
+                        // ✅ Show speed only when navigation has started
+                        if (_hasStartedNavigation)
+                          _buildStatItem(Icons.speed, 'Speed', '${_currentSpeed.toStringAsFixed(0)} km/h'),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    if (_isTrafficClearing)
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade50,
-                          borderRadius: BorderRadius.circular(8),
+
+                    // ✅ Show different buttons based on navigation state
+                    if (!_hasStartedNavigation)
+                    // Show "START NAVIGATION" button before navigation starts
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _onStartNavigation,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.play_arrow, color: Colors.white),
+                              SizedBox(width: 8),
+                              Text(
+                                'START NAVIGATION',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.check_circle, color: Colors.green, size: 16),
-                            SizedBox(width: 8),
-                            Text(
-                              'Traffic Clearance Requested',
-                              style: TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
+                      )
+                    else
+                    // Show "CLEAR TRAFFIC" and "COMPLETE TRIP" buttons after navigation starts
+                      Column(
+                        children: [
+                          // ✅ CLEAR TRAFFIC button
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: _isTrafficClearing ? null : _onClearTraffic,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: _isTrafficClearing ? Colors.grey : Colors.red,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    _isTrafficClearing ? Icons.check_circle : Icons.traffic,
+                                    color: Colors.white,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _isTrafficClearing ? 'TRAFFIC CLEARED' : 'CLEAR TRAFFIC',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: 8),
+                          // COMPLETE TRIP button
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: _isCompletingTrip ? null : _completeTrip,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              child: _isCompletingTrip
+                                  ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                                  : const Text(
+                                'COMPLETE TRIP',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _isCompletingTrip ? null : _completeTrip,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: _isCompletingTrip
-                            ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                            : const Text(
-                          'COMPLETE TRIP',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),

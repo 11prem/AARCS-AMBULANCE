@@ -696,10 +696,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       children: [
                         Text(
                           name,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
-                            color: Colors.black87,
+                            color: Theme.of(context).brightness == Brightness.dark
+                                ? Colors.white
+                                : Colors.black87,
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -714,7 +716,10 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                 rating.toStringAsFixed(1),
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Colors.grey.shade600,
+                                  color: Theme.of(context).brightness == Brightness.dark
+                                      ? Colors.white70
+                                      : Colors.grey.shade600,
+
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -748,7 +753,10 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 address,
                 style: TextStyle(
                   fontSize: 12,
-                  color: Colors.grey.shade600,
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white70
+                      : Colors.grey.shade600,
+
                 ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -766,7 +774,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: Colors.grey.shade700,
+                          color: Theme.of(context).brightness == Brightness.dark   // ✅ Replace line 769
+                              ? Colors.white
+                              : Colors.grey.shade700,
                         ),
                       ),
                     ],
