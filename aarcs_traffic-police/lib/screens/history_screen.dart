@@ -20,7 +20,8 @@ class HistoryScreen extends StatefulWidget {
 class _HistoryScreenState extends State<HistoryScreen> {
   final DatabaseReference _database = FirebaseDatabase.instanceFor(
     app: Firebase.app(),
-    databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+    databaseURL:
+    'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
   ).ref();
 
   List<Map<String, dynamic>> _historyItems = [];
@@ -39,11 +40,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       });
 
       print('🔍 Querying history for ambulance: ${widget.ambulanceId}');
-
-      final snapshot = await _database
-          .child('emergency_requests')
-          .get();
-
+      final snapshot = await _database.child('emergency_requests').get();
       print('📊 Snapshot exists: ${snapshot.exists}');
       print('📊 Raw data: ${snapshot.value}');
 
@@ -59,10 +56,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
           final reqAmbulanceId = requestData['ambulanceId']?.toString() ?? '';
 
           print('🔍 Checking request: $key');
-          print('   - Ambulance ID: $reqAmbulanceId');
-          print('   - Status: $status');
+          print(' - Ambulance ID: $reqAmbulanceId');
+          print(' - Status: $status');
 
           bool shouldInclude = false;
+
           if (widget.ambulanceId == null) {
             shouldInclude = (status == 'accepted' ||
                 status == 'completed' ||
@@ -93,7 +91,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
               'sourceLng': sourceCoords != null ? sourceCoords['lng'] : 0.0,
               'destLat': destCoords != null ? destCoords['lat'] : 0.0,
               'destLng': destCoords != null ? destCoords['lng'] : 0.0,
-              'trafficClearanceRequested': status == 'accepted' || status == 'completed',
+              'trafficClearanceRequested':
+              status == 'accepted' || status == 'completed',
+
+              // ✅ Use description + priorityLabel for critical check
+              'description': requestData['description'] ?? '',
+              'priorityLabel':
+              (requestData['priorityLabel'] ?? 'LOW').toString().toUpperCase(),
             });
           }
         });
@@ -129,7 +133,20 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (timestamp == null || timestamp == 0) return 'N/A';
     try {
       final date = DateTime.fromMillisecondsSinceEpoch(timestamp as int);
-      final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      final months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec'
+      ];
       final month = months[date.month - 1];
       final day = date.day.toString().padLeft(2, '0');
       final year = date.year;
@@ -142,13 +159,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   String _calculateDuration(dynamic startTime, dynamic completedTime) {
-    if (startTime == null || startTime == 0 || completedTime == null || completedTime == 0) {
+    if (startTime == null ||
+        startTime == 0 ||
+        completedTime == null ||
+        completedTime == 0) {
       return 'N/A';
     }
 
     try {
       final start = DateTime.fromMillisecondsSinceEpoch(startTime as int);
-      final completed = DateTime.fromMillisecondsSinceEpoch(completedTime as int);
+      final completed =
+      DateTime.fromMillisecondsSinceEpoch(completedTime as int);
       final duration = completed.difference(start);
       final hours = duration.inHours;
       final minutes = duration.inMinutes % 60;
@@ -189,7 +210,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
-  // ✅ ADDED: Copy to clipboard function
+  // ✅ Copy to clipboard
   void _copyToClipboard(String text, String label) {
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -241,7 +262,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (_isLoading) {
       return const Center(
         child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1976D2)),
+          valueColor: AlwaysStoppedAnimation(Color(0xFF1976D2)),
         ),
       );
     }
@@ -299,7 +320,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final statusColor = _getStatusColor(status);
     final duration = _calculateDuration(item['timestamp'], item['completed_at']);
     final trafficRequested = item['trafficClearanceRequested'] ?? false;
-    final tripId = item['requestId'] ?? 'Unknown'; // ✅ ADDED: Full trip ID
+    final tripId = item['requestId'] ?? 'Unknown';
+
+    // ✅ Read priorityLabel + description
+    final priorityLabel =
+    (item['priorityLabel'] ?? 'LOW').toString().toUpperCase();
+    final description = (item['description'] ?? '').toString();
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -353,7 +379,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
-                      // ✅ UPDATED: Full Trip ID with copy functionality
+                      // Trip ID with copy
                       GestureDetector(
                         onTap: () => _copyToClipboard(tripId, 'Trip ID'),
                         child: Row(
@@ -381,10 +407,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: statusColor,
                     borderRadius: BorderRadius.circular(20),
@@ -407,7 +431,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                // ✅ UPDATED: Starting Location with landmark only (no coordinates)
                 _buildDetailRow(
                   Icons.my_location,
                   'Starting Location',
@@ -415,8 +438,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   Colors.blue,
                 ),
                 const SizedBox(height: 12),
-
-                // Hospital Destination
                 _buildDetailRow(
                   Icons.local_hospital,
                   'Hospital Destination',
@@ -424,9 +445,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   Colors.red,
                 ),
 
-                const Divider(height: 24),
+                // ✅ Emergency Condition only for CRITICAL + non‑empty
+                if (priorityLabel == 'CRITICAL' && description.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildDetailRow(
+                    Icons.warning_amber_rounded,
+                    'Emergency Condition',
+                    description,
+                    Colors.red,
+                  ),
+                ],
 
-                // Timestamps
+                const Divider(height: 24),
                 Row(
                   children: [
                     Expanded(
@@ -446,10 +476,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ),
                   ],
                 ),
-
                 const SizedBox(height: 12),
-
-                // Duration and Distance
                 Row(
                   children: [
                     Expanded(
@@ -469,14 +496,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     ),
                   ],
                 ),
-
                 const SizedBox(height: 12),
-
-                // Traffic clearance
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: trafficRequested ? Colors.green[50] : Colors.grey[100],
+                    color:
+                    trafficRequested ? Colors.green[50] : Colors.grey[100],
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
                       color: trafficRequested ? Colors.green : Colors.grey,
@@ -497,7 +522,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
-                            color: trafficRequested ? Colors.green[800] : Colors.grey[700],
+                            color: trafficRequested
+                                ? Colors.green[800]
+                                : Colors.grey[700],
                           ),
                         ),
                       ),
@@ -512,7 +539,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  Widget _buildDetailRow(IconData icon, String label, String value, Color iconColor) {
+  Widget _buildDetailRow(
+      IconData icon, String label, String value, Color iconColor) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

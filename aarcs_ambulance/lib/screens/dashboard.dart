@@ -1,15 +1,25 @@
 // lib/screens/dashboard.dart
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
+
 import 'package:geolocator/geolocator.dart';
+
 import 'package:http/http.dart' as http;
+
 import 'route_navigation.dart';
+
 import 'history_screen.dart';
+
 import 'dart:async';
+
 import 'package:firebase_database/firebase_database.dart';
+
 import 'package:firebase_core/firebase_core.dart';
+
 import '../models/priority_model.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -23,12 +33,15 @@ class DashboardScreen extends StatefulWidget {
   });
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
+  State createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProviderStateMixin {
+class _DashboardScreenState extends State<DashboardScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _destinationController = TextEditingController();
-  final TextEditingController _justificationController = TextEditingController();
+  final TextEditingController _justificationController =
+  TextEditingController();
+
   bool _isButtonPressed = false;
   bool _isLoading = false;
   Position? _currentPosition;
@@ -64,19 +77,43 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   ];
 
   final List<String> _excludeKeywords = [
-    'dental', 'ortho', 'orthopedic', 'orthopedic',
-    'skin', 'dermatology', 'cosmetic', 'beauty',
-    'eye', 'optical', 'vision', 'lasik',
-    'ent', 'ear nose throat',
-    'fertility', 'ivf','care'
-        'psychiatry', 'psychology', 'mental health',
-    'physiotherapy', 'rehab', 'rehabilitation',
-    'ayurveda', 'homeopathy',
-    'diagnostic', 'lab', 'pathology',
-    'pharmacy', 'medical store',
-    'clinic', 'polyclinic',
-    'veterinary', 'pet',
-    'nursing home', 'derby','medicity'
+    'dental',
+    'ortho',
+    'orthopedic',
+    'orthopedic',
+    'skin',
+    'dermatology',
+    'cosmetic',
+    'beauty',
+    'eye',
+    'optical',
+    'vision',
+    'lasik',
+    'ent',
+    'ear nose throat',
+    'fertility',
+    'ivf',
+    'care',
+    'psychiatry',
+    'psychology',
+    'mental health',
+    'physiotherapy',
+    'rehab',
+    'rehabilitation',
+    'ayurveda',
+    'homeopathy',
+    'diagnostic',
+    'lab',
+    'pathology',
+    'pharmacy',
+    'medical store',
+    'clinic',
+    'polyclinic',
+    'veterinary',
+    'pet',
+    'nursing home',
+    'derby',
+    'medicity'
   ];
 
   final List<String> _hospitalKeywords = [
@@ -101,8 +138,10 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     setState(() {
       _isLoading = true;
     });
+
     await _determinePositionWithFallback();
     await _fetchNearbyHospitals();
+
     setState(() {
       _isLoading = false;
     });
@@ -113,6 +152,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         await Geolocator.openLocationSettings();
+        return;
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
@@ -122,13 +162,15 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
       if (permission == LocationPermission.deniedForever) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location permissions are permanently denied')),
+          const SnackBar(
+              content: Text('Location permissions are permanently denied')),
         );
         return;
       }
 
       try {
-        final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+        final pos = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high);
         _currentPosition = pos;
       } catch (e) {
         final last = await Geolocator.getLastKnownPosition();
@@ -140,20 +182,23 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     }
   }
 
-  bool _isValidHospital(String name, List<dynamic> types) {
+  bool _isValidHospital(String name, List<String> types) {
     final String nameLower = name.toLowerCase();
+
     for (String excludeKeyword in _excludeKeywords) {
       if (nameLower.contains(excludeKeyword.toLowerCase())) {
         return false;
       }
     }
 
-    bool nameMatch = _allowedNameKeywords.any((kw) => nameLower.contains(kw.toLowerCase()));
+    bool nameMatch =
+    _allowedNameKeywords.any((kw) => nameLower.contains(kw.toLowerCase()));
+
     bool typeMatch = types.any((type) =>
     type.contains('hospital') ||
         type.contains('health') ||
-        type.contains('establishment')
-    );
+        type.contains('establishment'));
+
     return nameMatch || (typeMatch && !nameLower.contains('clinic'));
   }
 
@@ -162,8 +207,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         'https://maps.googleapis.com/maps/api/place/details/json'
             '?place_id=$placeId'
             '&fields=opening_hours,current_opening_hours'
-            '&key=$_googleApiKey'
-    );
+            '&key=$_googleApiKey');
+
     try {
       final resp = await http.get(detailsUrl);
       if (resp.statusCode == 200) {
@@ -178,8 +223,10 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     return null;
   }
 
-  Map<String, dynamic> _getOpeningStatus(Map<String, dynamic>? openingHours, Map<String, dynamic>? currentOpeningHours) {
-    if (currentOpeningHours != null && currentOpeningHours.containsKey('open_now')) {
+  Map<String, dynamic> _getOpeningStatus(
+      Map<String, dynamic>? openingHours, Map<String, dynamic>? currentOpeningHours) {
+    if (currentOpeningHours != null &&
+        currentOpeningHours.containsKey('open_now')) {
       return {
         'isOpen': currentOpeningHours['open_now'] as bool,
         'isKnown': true,
@@ -214,20 +261,22 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         '&radius=10000'
         '&type=hospital'
         '&key=$_googleApiKey';
+
     try {
       setState(() => _isLoading = true);
       final resp = await http.get(Uri.parse(placesUrl));
       if (resp.statusCode != 200) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to fetch hospitals. Try again later.")),
+          const SnackBar(
+              content: Text("Failed to fetch hospitals. Try again later.")),
         );
         return;
       }
 
       final data = json.decode(resp.body);
       final results = (data['results'] as List?) ?? [];
-
       final List<Map<String, dynamic>> hospitals = [];
+
       for (var place in results) {
         final geometry = place['geometry'];
         final loc = geometry?['location'];
@@ -242,10 +291,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         final String name = (place['name'] ?? '').toString();
         final String placeId = (place['place_id'] ?? '').toString();
         final String vicinity = (place['vicinity'] ?? '').toString();
-        final double rating = (place['rating'] is num) ? (place['rating'] as num).toDouble() : 0.0;
+        final double rating =
+        (place['rating'] is num) ? (place['rating'] as num).toDouble() : 0.0;
 
         final dynamic typesDynamic = place['types'];
-        final List<dynamic> types = [];
+        final List<String> types = [];
         if (typesDynamic is List) {
           for (var t in typesDynamic) {
             if (t != null) types.add(t.toString().toLowerCase());
@@ -269,13 +319,19 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         };
 
         if (place['opening_hours'] != null) {
-          openingStatus = _getOpeningStatus(place['opening_hours'], null);
+          openingStatus = _getOpeningStatus(
+              Map<String, dynamic>.from(place['opening_hours']), null);
         } else {
           final placeDetails = await _getPlaceDetails(placeId);
           if (placeDetails != null) {
             openingStatus = _getOpeningStatus(
-                placeDetails['opening_hours'],
-                placeDetails['current_opening_hours']
+              placeDetails['opening_hours'] != null
+                  ? Map<String, dynamic>.from(placeDetails['opening_hours'])
+                  : null,
+              placeDetails['current_opening_hours'] != null
+                  ? Map<String, dynamic>.from(
+                  placeDetails['current_opening_hours'])
+                  : null,
             );
           }
         }
@@ -288,7 +344,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           'lng': lng,
           'rating': rating,
           'distance_m': distanceMeters,
-          'distance_text': (distanceMeters / 1000).toStringAsFixed(2) + ' km',
+          'distance_text':
+          (distanceMeters / 1000).toStringAsFixed(2) + ' km',
           'isOpen': openingStatus['isOpen'],
           'isOpeningStatusKnown': openingStatus['isKnown'],
         });
@@ -301,9 +358,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         return;
       }
 
-      hospitals.sort((a, b) => (a['distance_m'] as double).compareTo(b['distance_m'] as double));
+      hospitals.sort(
+              (a, b) => (a['distance_m'] as double).compareTo(b['distance_m']));
       final limited = hospitals.take(10).toList();
-
       setState(() {
         nearbyHospitals = limited;
       });
@@ -327,17 +384,16 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             'input=$query'
             '&location=${_currentPosition!.latitude},${_currentPosition!.longitude}'
             '&radius=15000'
-            '&key=$_googleApiKey'
-    );
+            '&key=$_googleApiKey');
 
     try {
       final resp = await http.get(url);
       if (resp.statusCode == 200) {
         final data = json.decode(resp.body);
         final predictions = (data['predictions'] as List?) ?? [];
-
         final filtered = predictions.where((pred) {
-          final desc = (pred['description'] ?? '').toString().toLowerCase();
+          final desc =
+          (pred['description'] ?? '').toString().toLowerCase();
           return _hospitalKeywords.any((kw) => desc.contains(kw));
         }).toList();
 
@@ -410,7 +466,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             const SizedBox(height: 16),
             ...EmergencyPriority.values.map((priority) {
               final config = PriorityConfig.fromPriority(priority);
-
               return GestureDetector(
                 onTap: () {
                   // ✅ ANTI-MISUSE: Show verification for CRITICAL priority
@@ -482,7 +537,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            Icon(Icons.warning, color: Colors.red, size: 28),
+            const Icon(Icons.warning, color: Colors.red, size: 28),
             const SizedBox(width: 8),
             const Expanded(
               child: Text(
@@ -521,7 +576,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           '• Unconscious patient\n'
                           '• Respiratory failure\n'
                           '• Stroke symptoms',
-                      style: TextStyle(fontSize: 12, color: Colors.black87),
+                      style:
+                      TextStyle(fontSize: 12, color: Colors.black87),
                     ),
                   ],
                 ),
@@ -556,12 +612,14 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 ),
                 child: const Row(
                   children: [
-                    Icon(Icons.info_outline, size: 16, color: Colors.orange),
+                    Icon(Icons.info_outline,
+                        size: 16, color: Colors.orange),
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Misuse will be logged and reported',
-                        style: TextStyle(fontSize: 11, color: Colors.orange),
+                        style:
+                        TextStyle(fontSize: 11, color: Colors.orange),
                       ),
                     ),
                   ],
@@ -582,11 +640,13 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           ),
           ElevatedButton(
             onPressed: () {
-              final justification = _justificationController.text.trim();
+              final justification =
+              _justificationController.text.trim();
               if (justification.isEmpty || justification.length < 10) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Please provide a valid justification (min 10 characters)'),
+                    content: Text(
+                        'Please provide a valid justification (min 10 characters)'),
                     backgroundColor: Colors.red,
                   ),
                 );
@@ -594,13 +654,15 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
               }
 
               Navigator.pop(context);
-              _startNavigationWithPriority(priority, justification: justification);
+              _startNavigationWithPriority(priority,
+                  justification: justification);
               _justificationController.clear();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
             ),
-            child: const Text('CONFIRM', style: TextStyle(color: Colors.white)),
+            child: const Text('CONFIRM',
+                style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -608,7 +670,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   }
 
   // ✅ NEW: Start navigation with selected priority
-  void _startNavigationWithPriority(EmergencyPriority priority, {String? justification}) {
+  void _startNavigationWithPriority(EmergencyPriority priority,
+      {String? justification}) {
     if (_selectedHospital == null) return;
 
     // Log critical priority usage
@@ -626,6 +689,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           destinationLng: _selectedHospital!['lng'],
           onToggleTheme: widget.onToggleTheme,
           priority: priority,
+          justification: justification, // ✅ PASS TO ROUTE SCREEN
         ),
       ),
     );
@@ -636,7 +700,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     try {
       final logsRef = FirebaseDatabase.instanceFor(
         app: Firebase.app(),
-        databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+        databaseURL:
+        'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
       ).ref().child('critical_priority_logs').push();
 
       await logsRef.set({
@@ -644,12 +709,13 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         'destination': _selectedHospital!['name'],
         'justification': justification,
         'timestamp': ServerValue.timestamp,
-        'location': 'Lat: ${_currentPosition?.latitude}, Lng: ${_currentPosition?.longitude}',
+        'location':
+        'Lat: ${_currentPosition?.latitude}, Lng: ${_currentPosition?.longitude}',
       });
 
-      print('✅ Critical priority usage logged');
+      debugPrint('✅ Critical priority usage logged');
     } catch (e) {
-      print('❌ Failed to log critical priority: $e');
+      debugPrint('❌ Failed to log critical priority: $e');
     }
   }
 
@@ -699,7 +765,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
-                            color: Theme.of(context).brightness == Brightness.dark
+                            color: Theme.of(context).brightness ==
+                                Brightness.dark
                                 ? Colors.white
                                 : Colors.black87,
                           ),
@@ -710,25 +777,29 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         Row(
                           children: [
                             if (rating > 0) ...[
-                              Icon(Icons.star, color: Colors.amber, size: 14),
+                              const Icon(Icons.star,
+                                  color: Colors.amber, size: 14),
                               const SizedBox(width: 4),
                               Text(
                                 rating.toStringAsFixed(1),
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Theme.of(context).brightness == Brightness.dark
+                                  color: Theme.of(context).brightness ==
+                                      Brightness.dark
                                       ? Colors.white70
                                       : Colors.grey.shade600,
-
                                 ),
                               ),
                               const SizedBox(width: 12),
                             ],
                             if (isOpenKnown) ...[
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: isOpen ? Colors.green.shade50 : Colors.red.shade50,
+                                  color: isOpen
+                                      ? Colors.green.shade50
+                                      : Colors.red.shade50,
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
@@ -736,7 +807,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                   style: TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
-                                    color: isOpen ? Colors.green.shade700 : Colors.red.shade700,
+                                    color: isOpen
+                                        ? Colors.green.shade700
+                                        : Colors.red.shade700,
                                   ),
                                 ),
                               ),
@@ -756,7 +829,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   color: Theme.of(context).brightness == Brightness.dark
                       ? Colors.white70
                       : Colors.grey.shade600,
-
                 ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -767,14 +839,16 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.directions_car, size: 14, color: Colors.grey.shade600),
+                      Icon(Icons.directions_car,
+                          size: 14, color: Colors.grey.shade600),
                       const SizedBox(width: 4),
                       Text(
                         distance,
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: Theme.of(context).brightness == Brightness.dark   // ✅ Replace line 769
+                          color: Theme.of(context).brightness ==
+                              Brightness.dark
                               ? Colors.white
                               : Colors.grey.shade700,
                         ),
@@ -782,7 +856,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ],
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4),
                     decoration: BoxDecoration(
                       color: Colors.red.shade600,
                       borderRadius: BorderRadius.circular(20),
@@ -817,13 +892,15 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 controller: _destinationController,
                 onChanged: (value) {
                   if (_debounce?.isActive ?? false) _debounce!.cancel();
-                  _debounce = Timer(const Duration(milliseconds: 500), () {
-                    _fetchSearchSuggestions(value);
-                  });
+                  _debounce =
+                      Timer(const Duration(milliseconds: 500), () {
+                        _fetchSearchSuggestions(value);
+                      });
                 },
                 decoration: InputDecoration(
                   hintText: "Search hospital destination",
-                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                  prefixIcon:
+                  const Icon(Icons.search, color: Colors.grey),
                   suffixIcon: _destinationController.text.isNotEmpty
                       ? IconButton(
                     icon: const Icon(Icons.clear, color: Colors.grey),
@@ -833,11 +910,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     },
                   )
                       : null,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  contentPadding: const EdgeInsets.symmetric(
+                      vertical: 12, horizontal: 16),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8)),
                 ),
               ),
-
               // Search suggestions dropdown
               if (_searchSuggestions.isNotEmpty)
                 Container(
@@ -846,7 +924,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   decoration: BoxDecoration(
                     color: Theme.of(context).cardColor,
                     borderRadius: BorderRadius.circular(8),
-                    boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black12, blurRadius: 4)
+                    ],
                   ),
                   child: ListView.builder(
                     shrinkWrap: true,
@@ -863,19 +943,20 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         onTap: () async {
                           _destinationController.text = description;
                           setState(() => _searchSuggestions = []);
-
                           final placeId = suggestion['place_id'];
                           final detailsUrl = Uri.parse(
-                            'https://maps.googleapis.com/maps/api/place/details/json'
-                                '?place_id=$placeId&key=$_googleApiKey',
-                          );
+                              'https://maps.googleapis.com/maps/api/place/details/json'
+                                  '?place_id=$placeId&key=$_googleApiKey');
                           final detailsResp = await http.get(detailsUrl);
                           if (detailsResp.statusCode == 200) {
-                            final detailsData = json.decode(detailsResp.body);
-                            final loc = detailsData['result']['geometry']['location'];
-                            final double lat = (loc['lat'] as num).toDouble();
-                            final double lng = (loc['lng'] as num).toDouble();
-
+                            final detailsData =
+                            json.decode(detailsResp.body);
+                            final loc = detailsData['result']['geometry']
+                            ['location'];
+                            final double lat =
+                            (loc['lat'] as num).toDouble();
+                            final double lng =
+                            (loc['lng'] as num).toDouble();
                             _showPrioritySelectionSheet({
                               'name': description,
                               'lat': lat,
@@ -893,7 +974,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             ],
           ),
         ),
-
         // Nearby Hospitals header
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -901,18 +981,19 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             children: [
               const Text(
                 'Nearby Hospitals',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style:
+                TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const Spacer(),
               IconButton(
                 tooltip: 'Refresh nearby hospitals',
-                icon: const Icon(Icons.refresh, color: Colors.red),
+                icon:
+                const Icon(Icons.refresh, color: Colors.red),
                 onPressed: _refreshLocationAndHospitals,
               ),
             ],
           ),
         ),
-
         // Hospital list
         Expanded(
           child: _isLoading
@@ -925,7 +1006,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             ),
           )
               : ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding:
+            const EdgeInsets.symmetric(horizontal: 16),
             itemCount: nearbyHospitals.length,
             itemBuilder: (context, index) {
               final hospital = nearbyHospitals[index];
@@ -946,7 +1028,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         elevation: 0,
         title: Row(
           children: [
-            const Icon(Icons.local_shipping_outlined, color: Colors.white),
+            const Icon(Icons.local_shipping_outlined,
+                color: Colors.white),
             const SizedBox(width: 8),
             Text(
               widget.ambulanceId,
@@ -960,7 +1043,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         ),
         actions: [
           IconButton(
-            icon: Icon(isDark ? Icons.wb_sunny : Icons.nights_stay, color: Colors.white),
+            icon: Icon(
+                isDark ? Icons.wb_sunny : Icons.nights_stay,
+                color: Colors.white),
             onPressed: widget.onToggleTheme,
           ),
         ],
@@ -970,7 +1055,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           indicatorWeight: 3,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+          labelStyle: const TextStyle(
+              fontWeight: FontWeight.w600, fontSize: 16),
           tabs: const [
             Tab(
               icon: Icon(Icons.dashboard),

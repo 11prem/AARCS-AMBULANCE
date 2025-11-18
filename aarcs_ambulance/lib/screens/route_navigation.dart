@@ -1,9 +1,11 @@
 // lib/screens/route_navigation.dart
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -11,16 +13,18 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:http/http.dart' as http;
 import 'package:geocoding/geocoding.dart';
+
 import '../models/priority_model.dart';
 
 // Firebase Service for Ambulance
 class FirebaseAmbulanceService {
   static final DatabaseReference _database = FirebaseDatabase.instanceFor(
     app: Firebase.app(),
-    databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+    databaseURL:
+    'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
   ).ref();
 
-  // ✅ UPDATED: Send route request with landmark information
+  // ✅ UPDATED: Send route request with landmark information + description
   static Future<String?> sendRouteRequest({
     required String ambulanceId,
     required String destinationName,
@@ -31,28 +35,33 @@ class FirebaseAmbulanceService {
     String? eta,
     String? distance,
     required EmergencyPriority priority,
-    required String apiKey, // ✅ ADDED: API key for Places lookup
+    required String apiKey, // API key for Places lookup
+    String? justification,  // ✅ NEW: justification from ambulance
   }) async {
     try {
       print('📝 Preparing Firebase write with priority: ${priority.index}...');
 
-      // ✅ NEW: Convert current coordinates to landmark
-      String currentLocationLandmark = await _getLocationLandmark(currentLat, currentLng, apiKey);
+      // Convert current coordinates to landmark
+      String currentLocationLandmark =
+      await _getLocationLandmark(currentLat, currentLng, apiKey);
 
       final requestRef = _database.child('emergency_requests').push();
       final requestId = requestRef.key;
+
       print('📝 Generated Request ID: $requestId');
 
       final requestData = {
         'ambulanceId': ambulanceId,
         'destination': destinationName,
-        'currentLocation': currentLocationLandmark, // ✅ CHANGED: Use landmark instead of coordinates
+        'currentLocation':
+        currentLocationLandmark, // Use landmark instead of coordinates
         'status': 'pending',
         'timestamp': ServerValue.timestamp,
         'eta': eta ?? 'N/A',
         'distance': distance ?? 'N/A',
         'priority': priority.index,
         'priorityLabel': PriorityConfig.fromPriority(priority).label,
+        'description': justification ?? '', // ✅ NEW: send description
         'sourceCoords': {
           'lat': currentLat,
           'lng': currentLng,
@@ -64,23 +73,26 @@ class FirebaseAmbulanceService {
       };
 
       print('📝 Writing data to Firebase...');
-      print('   Path: emergency_requests/$requestId');
-      print('   Current Location: $currentLocationLandmark');
-      print('   Data: $requestData');
+      print(' Path: emergency_requests/$requestId');
+      print(' Current Location: $currentLocationLandmark');
+      print(' Data: $requestData');
 
       await requestRef.set(requestData);
+
       print('✅ Firebase write SUCCESS!');
-      print('   Request ID: $requestId');
+      print(' Request ID: $requestId');
+
       return requestId;
     } catch (e) {
       print('❌ Firebase write FAILED: $e');
-      print('   Error type: ${e.runtimeType}');
+      print(' Error type: ${e.runtimeType}');
       return null;
     }
   }
 
-  // ✅ NEW: Get landmark from coordinates
-  static Future<String> _getLocationLandmark(double lat, double lng, String apiKey) async {
+  // Get landmark from coordinates
+  static Future<String> _getLocationLandmark(
+      double lat, double lng, String apiKey) async {
     try {
       // Try Google Places API first for nearby landmarks
       final placesUrl = Uri.parse(
@@ -88,23 +100,18 @@ class FirebaseAmbulanceService {
               'location=$lat,$lng&'
               'radius=100&'
               'type=point_of_interest|establishment|transit_station|bus_station|hospital|school|shopping_mall|store|restaurant|cafe|bank|atm|park|stadium|museum&'
-              'key=$apiKey'
-      );
+              'key=$apiKey');
 
       final placesResponse = await http.get(placesUrl);
-
       if (placesResponse.statusCode == 200) {
         final placesData = json.decode(placesResponse.body);
-
         if (placesData['status'] == 'OK' &&
             placesData['results'] != null &&
             (placesData['results'] as List).isNotEmpty) {
           final results = placesData['results'] as List;
-
           // Get the closest landmark
           for (var place in results) {
             final name = place['name'];
-
             if (name != null &&
                 !name.toString().toLowerCase().contains('unnamed') &&
                 name.toString().length > 2) {
@@ -115,13 +122,14 @@ class FirebaseAmbulanceService {
       }
 
       // Fallback to reverse geocoding
-      List<Placemark> placemarks = await placemarkFromCoordinates(lat, lng);
+      List<Placemark> placemarks =
+      await placemarkFromCoordinates(lat, lng);
       if (placemarks.isNotEmpty) {
         Placemark place = placemarks[0];
-
         if (place.street != null && place.street!.isNotEmpty) {
           return place.street!;
-        } else if (place.subLocality != null && place.subLocality!.isNotEmpty) {
+        } else if (place.subLocality != null &&
+            place.subLocality!.isNotEmpty) {
           return place.subLocality!;
         } else if (place.locality != null && place.locality!.isNotEmpty) {
           return place.locality!;
@@ -143,8 +151,10 @@ class RouteProgressHelper {
   static double distanceHaversine(LatLng point1, LatLng point2) {
     double lat1Rad = point1.latitude * (math.pi / 180);
     double lat2Rad = point2.latitude * (math.pi / 180);
-    double deltaLatRad = (point2.latitude - point1.latitude) * (math.pi / 180);
-    double deltaLngRad = (point2.longitude - point1.longitude) * (math.pi / 180);
+    double deltaLatRad =
+        (point2.latitude - point1.latitude) * (math.pi / 180);
+    double deltaLngRad =
+        (point2.longitude - point1.longitude) * (math.pi / 180);
 
     double a = math.sin(deltaLatRad / 2) * math.sin(deltaLatRad / 2) +
         math.cos(lat1Rad) *
@@ -152,22 +162,26 @@ class RouteProgressHelper {
             math.sin(deltaLngRad / 2) *
             math.sin(deltaLngRad / 2);
     double c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+
     return _earthRadius * c;
   }
 
-  static int findNearestPointOnRoute(LatLng currentPosition, List<LatLng> routePoints) {
+  static int findNearestPointOnRoute(
+      LatLng currentPosition, List<LatLng> routePoints) {
     if (routePoints.isEmpty) return 0;
 
     double minDistance = double.infinity;
     int nearestIndex = 0;
 
     for (int i = 0; i < routePoints.length; i++) {
-      double distance = distanceHaversine(currentPosition, routePoints[i]);
+      double distance =
+      distanceHaversine(currentPosition, routePoints[i]);
       if (distance < minDistance) {
         minDistance = distance;
         nearestIndex = i;
       }
     }
+
     return nearestIndex;
   }
 }
@@ -179,6 +193,7 @@ class RouteNavigationScreen extends StatefulWidget {
   final double? destinationLng;
   final VoidCallback onToggleTheme;
   final EmergencyPriority priority;
+  final String? justification; // ✅ NEW
 
   const RouteNavigationScreen({
     super.key,
@@ -188,10 +203,11 @@ class RouteNavigationScreen extends StatefulWidget {
     required this.destinationLng,
     required this.onToggleTheme,
     required this.priority,
+    this.justification, // ✅ NEW
   });
 
   @override
-  State<RouteNavigationScreen> createState() => _RouteNavigationScreenState();
+  State createState() => _RouteNavigationScreenState();
 }
 
 class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
@@ -216,7 +232,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
   // Navigation specific variables
   bool _isNavigating = false;
-  List<Map<String, dynamic>> _routeSteps = [];
+  List<dynamic> _routeSteps = [];
   int _currentStepIndex = 0;
   String _currentInstruction = "";
   String _nextInstruction = "";
@@ -226,11 +242,13 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   // Route progress tracking
   List<LatLng> _routePoints = [];
   int _currentRoutePointIndex = 0;
+
   Timer? _routeUpdateTimer;
   Timer? _instructionDismissTimer;
   bool _showInstructionCard = true;
 
   final String _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
+
   StreamSubscription<Position>? _positionSubscription;
 
   @override
@@ -293,13 +311,18 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     );
   }
 
-  // ✅ UPDATED: Pass API key to Firebase service
+  // ✅ UPDATED: Pass API key & justification to Firebase service
   void _onStartNavigation() async {
     setState(() {
       _hasStartedNavigation = true;
     });
 
-    // ✅ UPDATED: Pass API key for landmark lookup
+    if (_currentPosition == null ||
+        widget.destinationLat == null ||
+        widget.destinationLng == null) {
+      return;
+    }
+
     final requestId = await FirebaseAmbulanceService.sendRouteRequest(
       ambulanceId: widget.ambulanceId,
       destinationName: widget.destination,
@@ -310,15 +333,15 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       eta: _eta,
       distance: _distance,
       priority: widget.priority,
-      apiKey: _apiKey, // ✅ ADDED: Pass API key
+      apiKey: _apiKey,
+      justification: widget.justification, // ✅ NEW: pass justification
     );
 
     if (requestId != null) {
       _activeRequestId = requestId;
+      _startLocationTracking();
+      _startNavigationMode();
     }
-
-    _startLocationTracking();
-    _startNavigationMode();
   }
 
   Future<void> _determinePosition() async {
@@ -327,12 +350,14 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       if (!serviceEnabled) {
         await Geolocator.openLocationSettings();
         setState(() {
-          _errorMessage = 'Location services disabled. Please enable.';
+          _errorMessage =
+          'Location services disabled. Please enable.';
         });
         return;
       }
 
-      LocationPermission permission = await Geolocator.checkPermission();
+      LocationPermission permission =
+      await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
@@ -345,7 +370,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
       if (permission == LocationPermission.deniedForever) {
         setState(() {
-          _errorMessage = 'Location permissions are permanently denied';
+          _errorMessage =
+          'Location permissions are permanently denied';
         });
         return;
       }
@@ -353,7 +379,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _currentPosition = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
-      debugPrint('Current position: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
+
+      debugPrint(
+          'Current position: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
     } catch (e) {
       debugPrint('Error getting position: $e');
       setState(() {
@@ -369,7 +397,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       return;
     }
 
-    final url = 'https://maps.googleapis.com/maps/api/directions/json?'
+    final url =
+        'https://maps.googleapis.com/maps/api/directions/json?'
         'origin=${_currentPosition!.latitude},${_currentPosition!.longitude}&'
         'destination=${widget.destinationLat},${widget.destinationLng}&'
         'mode=driving&'
@@ -386,19 +415,22 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
           setState(() {
             _eta = leg['duration']['text'];
             _distance = leg['distance']['text'];
-            _routeSteps = List<Map<String, dynamic>>.from(leg['steps']);
+            _routeSteps = List<dynamic>.from(leg['steps']);
           });
 
           final encodedPolyline = route['overview_polyline']['points'];
           _routePoints = _decodePolyline(encodedPolyline);
+
           _updatePolylines();
           _updateMarkers();
 
           if (_routeSteps.isNotEmpty) {
             setState(() {
-              _currentInstruction = _cleanHtmlTags(_routeSteps[0]['html_instructions']);
+              _currentInstruction =
+                  _cleanHtmlTags(_routeSteps[0]['html_instructions']);
               if (_routeSteps.length > 1) {
-                _nextInstruction = _cleanHtmlTags(_routeSteps[1]['html_instructions']);
+                _nextInstruction =
+                    _cleanHtmlTags(_routeSteps[1]['html_instructions']);
               }
             });
           }
@@ -421,26 +453,33 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
-      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+
+      int dlat =
+      ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
       lat += dlat;
 
       shift = 0;
       result = 0;
+
       do {
         b = encoded.codeUnitAt(index++) - 63;
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
-      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+
+      int dlng =
+      ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
       lng += dlng;
 
       points.add(LatLng(lat / 1E5, lng / 1E5));
     }
+
     return points;
   }
 
   String _cleanHtmlTags(String htmlString) {
-    RegExp exp = RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
+    RegExp exp =
+    RegExp(r"<[^>]*>", multiLine: true, caseSensitive: true);
     return htmlString.replaceAll(exp, '');
   }
 
@@ -450,7 +489,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       distanceFilter: 5,
     );
 
-    _positionSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
+    _positionSubscription = Geolocator.getPositionStream(
+        locationSettings: locationSettings)
+        .listen((Position position) {
       if (!mounted) return;
 
       final oldPosition = _currentPosition;
@@ -471,11 +512,12 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
           position.longitude,
         );
 
-        final num timeDiff = (position.timestamp?.millisecondsSinceEpoch ?? 0) -
-            (oldPosition.timestamp?.millisecondsSinceEpoch ?? 0);
-
+        final num timeDiff =
+            (position.timestamp?.millisecondsSinceEpoch ?? 0) -
+                (oldPosition.timestamp?.millisecondsSinceEpoch ?? 0);
         if (timeDiff > 0) {
-          _currentSpeed = (distanceTraveled / (timeDiff / 1000)) * 3.6;
+          _currentSpeed =
+              (distanceTraveled / (timeDiff / 1000)) * 3.6;
         }
       }
 
@@ -489,14 +531,15 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       if (_isNavigating) {
         _updateRouteProgress();
         _updateNavigationCamera();
+        _checkIfReachedDestination();
       }
-
-      _checkIfReachedDestination();
     });
   }
 
   void _checkIfReachedDestination() {
-    if (_currentPosition == null || widget.destinationLat == null || widget.destinationLng == null) {
+    if (_currentPosition == null ||
+        widget.destinationLat == null ||
+        widget.destinationLng == null) {
       return;
     }
 
@@ -544,7 +587,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green,
               ),
-              child: const Text('COMPLETE TRIP', style: TextStyle(color: Colors.white)),
+              child: const Text('COMPLETE TRIP',
+                  style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -564,15 +608,18 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
       final requestQuery = await FirebaseDatabase.instanceFor(
         app: Firebase.app(),
-        databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
-      ).ref()
+        databaseURL:
+        'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+      )
+          .ref()
           .child('emergency_requests')
           .orderByChild('ambulanceId')
           .equalTo(widget.ambulanceId)
           .limitToLast(1)
           .once();
 
-      print('📊 Request query snapshot exists: ${requestQuery.snapshot.exists}');
+      print(
+          '📊 Request query snapshot exists: ${requestQuery.snapshot.exists}');
       print('📊 Request query value: ${requestQuery.snapshot.value}');
 
       if (requestQuery.snapshot.value != null) {
@@ -581,13 +628,17 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         final requestData = requests[requestId];
         final currentStatus = requestData['status'];
 
-        print('🔍 Found request: $requestId with status: $currentStatus');
+        print(
+            '🔍 Found request: $requestId with status: $currentStatus');
 
-        if (currentStatus == 'pending' || currentStatus == 'accepted') {
+        if (currentStatus == 'pending' ||
+            currentStatus == 'accepted') {
           await FirebaseDatabase.instanceFor(
             app: Firebase.app(),
-            databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
-          ).ref()
+            databaseURL:
+            'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+          )
+              .ref()
               .child('emergency_requests')
               .child(requestId)
               .update({
@@ -605,7 +656,9 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                   children: [
                     Icon(Icons.check_circle, color: Colors.white),
                     SizedBox(width: 8),
-                    Expanded(child: Text('✅ Trip completed successfully!')),
+                    Expanded(
+                        child: Text(
+                            '✅ Trip completed successfully!')),
                   ],
                 ),
                 backgroundColor: Colors.green,
@@ -613,7 +666,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               ),
             );
 
-            await Future.delayed(const Duration(milliseconds: 500));
+            await Future.delayed(
+                const Duration(milliseconds: 500));
 
             showDialog(
               context: context,
@@ -621,19 +675,23 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               builder: (context) => AlertDialog(
                 title: const Row(
                   children: [
-                    Icon(Icons.check_circle, color: Colors.green, size: 32),
+                    Icon(Icons.check_circle,
+                        color: Colors.green, size: 32),
                     SizedBox(width: 8),
                     Text('Trip Completed'),
                   ],
                 ),
-                content: const Text('You have successfully completed this trip. Check the History tab to see your completed trips.'),
+                content: const Text(
+                    'You have successfully completed this trip. Check the History tab to see your completed trips.'),
                 actions: [
                   TextButton(
                     onPressed: () {
                       Navigator.of(context).pop();
                       Navigator.of(context).pop();
                     },
-                    child: const Text('VIEW HISTORY', style: TextStyle(fontWeight: FontWeight.bold)),
+                    child: const Text('VIEW HISTORY',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold)),
                   ),
                 ],
               ),
@@ -644,7 +702,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('ℹ️ This trip has already been completed'),
+                content:
+                Text('ℹ️ This trip has already been completed'),
                 backgroundColor: Colors.blue,
               ),
             );
@@ -652,11 +711,14 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             Navigator.of(context).pop();
           }
         } else {
-          throw Exception('Cannot complete: Trip is $currentStatus');
+          throw Exception(
+              'Cannot complete: Trip is $currentStatus');
         }
       } else {
-        print('❌ No active request found for ambulance: ${widget.ambulanceId}');
-        throw Exception('No active trip found. Please start a trip first.');
+        print(
+            '❌ No active request found for ambulance: ${widget.ambulanceId}');
+        throw Exception(
+            'No active trip found. Please start a trip first.');
       }
     } catch (e) {
       print('❌ Failed to complete trip: $e');
@@ -683,8 +745,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     try {
       final requestQuery = await FirebaseDatabase.instanceFor(
         app: Firebase.app(),
-        databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
-      ).ref()
+        databaseURL:
+        'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+      )
+          .ref()
           .child('emergency_requests')
           .orderByChild('ambulanceId')
           .equalTo(widget.ambulanceId)
@@ -698,8 +762,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
         await FirebaseDatabase.instanceFor(
           app: Firebase.app(),
-          databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
-        ).ref()
+          databaseURL:
+          'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+        )
+            .ref()
             .child('emergency_requests')
             .child(requestId)
             .update({
@@ -715,7 +781,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
           'currentSpeed': _currentSpeed,
         });
 
-        print('📡 Location sent to Firebase: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
+        print(
+            '📡 Location sent to Firebase: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}');
       }
     } catch (e) {
       print('❌ Failed to send location to Firebase: $e');
@@ -725,8 +792,11 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   void _updateRouteProgress() {
     if (_routePoints.isEmpty || _currentPosition == null) return;
 
-    LatLng currentLatLng = LatLng(_currentPosition!.latitude, _currentPosition!.longitude);
-    int nearestIndex = RouteProgressHelper.findNearestPointOnRoute(currentLatLng, _routePoints);
+    LatLng currentLatLng = LatLng(
+        _currentPosition!.latitude, _currentPosition!.longitude);
+
+    int nearestIndex = RouteProgressHelper.findNearestPointOnRoute(
+        currentLatLng, _routePoints);
 
     if (nearestIndex > _currentRoutePointIndex) {
       setState(() {
@@ -740,8 +810,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   void _updatePolylines() {
     if (_routePoints.isEmpty) return;
 
-    List<LatLng> completedRoute = _routePoints.sublist(0, _currentRoutePointIndex + 1);
-    List<LatLng> remainingRoute = _routePoints.sublist(_currentRoutePointIndex);
+    List<LatLng> completedRoute =
+    _routePoints.sublist(0, _currentRoutePointIndex + 1);
+    List<LatLng> remainingRoute =
+    _routePoints.sublist(_currentRoutePointIndex);
 
     setState(() {
       _polylines = {
@@ -766,29 +838,35 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   }
 
   void _updateNavigationInstructions() {
-    if (_routeSteps.isEmpty) return;
+    if (_routeSteps.isEmpty || _currentPosition == null) return;
 
     for (int i = 0; i < _routeSteps.length; i++) {
       var step = _routeSteps[i];
       final startLocation = step['start_location'];
-      final double stepLat = (startLocation['lat'] as num).toDouble();
-      final double stepLng = (startLocation['lng'] as num).toDouble();
-
+      final double stepLat =
+      (startLocation['lat'] as num).toDouble();
+      final double stepLng =
+      (startLocation['lng'] as num).toDouble();
       LatLng stepLocation = LatLng(stepLat, stepLng);
 
       double distanceToStep = RouteProgressHelper.distanceHaversine(
-        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-        stepLocation,
-      );
+          LatLng(_currentPosition!.latitude,
+              _currentPosition!.longitude),
+          stepLocation);
 
       if (distanceToStep < 50 && i != _currentStepIndex) {
         setState(() {
           _currentStepIndex = i;
-          _currentInstruction = _cleanHtmlTags(step['html_instructions']);
+          _currentInstruction =
+              _cleanHtmlTags(step['html_instructions']);
           if (i + 1 < _routeSteps.length) {
-            _nextInstruction = _cleanHtmlTags(_routeSteps[i + 1]['html_instructions']);
+            _nextInstruction = _cleanHtmlTags(
+                _routeSteps[i + 1]['html_instructions']);
+          } else {
+            _nextInstruction = '';
           }
         });
+
         _startInstructionDismissTimer();
         break;
       }
@@ -800,7 +878,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _mapController!.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(
-            target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+            target: LatLng(_currentPosition!.latitude,
+                _currentPosition!.longitude),
             zoom: 18.5,
             bearing: _currentBearing,
             tilt: 45.0,
@@ -815,14 +894,14 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     setState(() {
       _showInstructionCard = true;
     });
-
-    _instructionDismissTimer = Timer(const Duration(seconds: 10), () {
-      if (mounted) {
-        setState(() {
-          _showInstructionCard = false;
+    _instructionDismissTimer =
+        Timer(const Duration(seconds: 10), () {
+          if (mounted) {
+            setState(() {
+              _showInstructionCard = false;
+            });
+          }
         });
-      }
-    });
   }
 
   void _startNavigationMode() {
@@ -830,15 +909,18 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _isNavigating = true;
     });
 
-    _routeUpdateTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (mounted && _isNavigating) {
-        _updateRouteProgress();
-      }
-    });
+    _routeUpdateTimer =
+        Timer.periodic(const Duration(seconds: 2), (timer) {
+          if (mounted && _isNavigating) {
+            _updateRouteProgress();
+          }
+        });
   }
 
   void _updateMarkers() {
-    if (_currentPosition == null || widget.destinationLat == null || widget.destinationLng == null) {
+    if (_currentPosition == null ||
+        widget.destinationLat == null ||
+        widget.destinationLng == null) {
       return;
     }
 
@@ -849,14 +931,16 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         markers.add(
           Marker(
             markerId: const MarkerId('ambulance'),
-            position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+            position: LatLng(_currentPosition!.latitude,
+                _currentPosition!.longitude),
             icon: _ambulanceIcon!,
-            rotation: _currentBearing, // ✅ KEEP: Rotates to show direction of travel
-            anchor: const Offset(0.5, 0.5), // ✅ KEEP: Centers the icon on route
-            flat: false, // ✅ CHANGED: Set to false so it doesn't tilt with map
+            rotation: _currentBearing,
+            anchor: const Offset(0.5, 0.5),
+            flat: false,
             infoWindow: InfoWindow(
               title: 'Ambulance ${widget.ambulanceId}',
-              snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
+              snippet:
+              'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
             ),
           ),
         );
@@ -864,11 +948,15 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         markers.add(
           Marker(
             markerId: const MarkerId('ambulance'),
-            position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+            position: LatLng(_currentPosition!.latitude,
+                _currentPosition!.longitude),
+            icon:
+            BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueAzure),
             infoWindow: InfoWindow(
               title: 'Ambulance ${widget.ambulanceId}',
-              snippet: 'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
+              snippet:
+              'Speed: ${_currentSpeed.toStringAsFixed(1)} km/h',
             ),
           ),
         );
@@ -877,8 +965,11 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       markers.add(
         Marker(
           markerId: const MarkerId('start'),
-          position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+          position: LatLng(_currentPosition!.latitude,
+              _currentPosition!.longitude),
+          icon:
+          BitmapDescriptor.defaultMarkerWithHue(
+              BitmapDescriptor.hueGreen),
           infoWindow: const InfoWindow(
             title: 'Starting Point',
             snippet: 'Your current location',
@@ -890,8 +981,11 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     markers.add(
       Marker(
         markerId: const MarkerId('destination'),
-        position: LatLng(widget.destinationLat!, widget.destinationLng!),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        position: LatLng(
+            widget.destinationLat!, widget.destinationLng!),
+        icon:
+        BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueRed),
         infoWindow: InfoWindow(
           title: widget.destination,
           snippet: 'Hospital/Emergency Location',
@@ -903,7 +997,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       _markers = markers;
     });
   }
-
 
   Future<void> _onClearTraffic() async {
     if (!_hasStartedNavigation) return;
@@ -930,8 +1023,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
       try {
         await FirebaseDatabase.instanceFor(
           app: Firebase.app(),
-          databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
-        ).ref()
+          databaseURL:
+          'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+        )
+            .ref()
             .child('emergency_requests')
             .child(_activeRequestId!)
             .update({
@@ -948,7 +1043,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final priorityConfig = PriorityConfig.fromPriority(widget.priority);
+    final priorityConfig =
+    PriorityConfig.fromPriority(widget.priority);
 
     if (_isLoading) {
       return Scaffold(
@@ -981,7 +1077,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                const Icon(Icons.error_outline,
+                    size: 64, color: Colors.red),
                 const SizedBox(height: 16),
                 Text(
                   _errorMessage!,
@@ -1008,8 +1105,10 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
           GoogleMap(
             initialCameraPosition: CameraPosition(
               target: _currentPosition != null
-                  ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
-                  : LatLng(widget.destinationLat ?? 0, widget.destinationLng ?? 0),
+                  ? LatLng(_currentPosition!.latitude,
+                  _currentPosition!.longitude)
+                  : LatLng(widget.destinationLat ?? 0,
+                  widget.destinationLng ?? 0),
               zoom: 14.0,
               bearing: 0,
               tilt: 0,
@@ -1035,11 +1134,13 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             top: 50,
             left: 16,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
                 color: priorityConfig.backgroundColor,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: priorityConfig.color, width: 2),
+                border:
+                Border.all(color: priorityConfig.color, width: 2),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.2),
@@ -1051,7 +1152,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(priorityConfig.icon, color: priorityConfig.color, size: 20),
+                  Icon(priorityConfig.icon,
+                      color: priorityConfig.color, size: 20),
                   const SizedBox(width: 6),
                   Text(
                     priorityConfig.label,
@@ -1074,27 +1176,33 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               mini: true,
               backgroundColor: Colors.white,
               onPressed: () => Navigator.pop(context),
-              child: const Icon(Icons.arrow_back, color: Colors.black),
+              child: const Icon(Icons.arrow_back,
+                  color: Colors.black),
             ),
           ),
 
           // Navigation info card
-          if (_hasStartedNavigation && _showInstructionCard && _currentInstruction.isNotEmpty)
+          if (_hasStartedNavigation &&
+              _showInstructionCard &&
+              _currentInstruction.isNotEmpty)
             Positioned(
               top: 110,
               left: 16,
               right: 16,
               child: Card(
                 elevation: 8,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment:
+                    CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.navigation, color: Colors.blue, size: 24),
+                          const Icon(Icons.navigation,
+                              color: Colors.blue, size: 24),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
@@ -1106,10 +1214,12 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                             ),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.close, size: 20),
+                            icon: const Icon(Icons.close,
+                                size: 20),
                             onPressed: () {
                               setState(() {
-                                _showInstructionCard = false;
+                                _showInstructionCard =
+                                false;
                               });
                             },
                           ),
@@ -1138,22 +1248,28 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
             right: 16,
             child: Card(
               elevation: 8,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      mainAxisAlignment:
+                      MainAxisAlignment.spaceAround,
                       children: [
-                        _buildStatItem(Icons.timer, 'ETA', _eta),
-                        _buildStatItem(Icons.route, 'Distance', _distance),
+                        _buildStatItem(
+                            Icons.timer, 'ETA', _eta),
+                        _buildStatItem(Icons.route, 'Distance',
+                            _distance),
                         if (_hasStartedNavigation)
-                          _buildStatItem(Icons.speed, 'Speed', '${_currentSpeed.toStringAsFixed(0)} km/h'),
+                          _buildStatItem(
+                              Icons.speed,
+                              'Speed',
+                              '${_currentSpeed.toStringAsFixed(0)} km/h'),
                       ],
                     ),
                     const SizedBox(height: 12),
-
                     if (!_hasStartedNavigation)
                       SizedBox(
                         width: double.infinity,
@@ -1161,15 +1277,20 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                           onPressed: _onStartNavigation,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.green,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            padding:
+                            const EdgeInsets.symmetric(
+                                vertical: 14),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius:
+                              BorderRadius.circular(8),
                             ),
                           ),
                           child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisAlignment:
+                            MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.play_arrow, color: Colors.white),
+                              Icon(Icons.play_arrow,
+                                  color: Colors.white),
                               SizedBox(width: 8),
                               Text(
                                 'START NAVIGATION',
@@ -1189,24 +1310,37 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
-                              onPressed: _isTrafficClearing ? null : _onClearTraffic,
+                              onPressed: _isTrafficClearing
+                                  ? null
+                                  : _onClearTraffic,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: _isTrafficClearing ? Colors.grey : Colors.red,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                backgroundColor:
+                                _isTrafficClearing
+                                    ? Colors.grey
+                                    : Colors.red,
+                                padding:
+                                const EdgeInsets.symmetric(
+                                    vertical: 14),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
+                                  borderRadius:
+                                  BorderRadius.circular(8),
                                 ),
                               ),
                               child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisAlignment:
+                                MainAxisAlignment.center,
                                 children: [
                                   Icon(
-                                    _isTrafficClearing ? Icons.check_circle : Icons.traffic,
+                                    _isTrafficClearing
+                                        ? Icons.check_circle
+                                        : Icons.traffic,
                                     color: Colors.white,
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
-                                    _isTrafficClearing ? 'TRAFFIC CLEARED' : 'CLEAR TRAFFIC',
+                                    _isTrafficClearing
+                                        ? 'TRAFFIC CLEARED'
+                                        : 'CLEAR TRAFFIC',
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.bold,
@@ -1221,19 +1355,25 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
-                              onPressed: _isCompletingTrip ? null : _completeTrip,
+                              onPressed: _isCompletingTrip
+                                  ? null
+                                  : _completeTrip,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.green,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                padding:
+                                const EdgeInsets.symmetric(
+                                    vertical: 14),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
+                                  borderRadius:
+                                  BorderRadius.circular(8),
                                 ),
                               ),
                               child: _isCompletingTrip
                                   ? const SizedBox(
                                 height: 20,
                                 width: 20,
-                                child: CircularProgressIndicator(
+                                child:
+                                CircularProgressIndicator(
                                   color: Colors.white,
                                   strokeWidth: 2,
                                 ),
@@ -1242,7 +1382,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                                 'COMPLETE TRIP',
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontWeight: FontWeight.bold,
+                                  fontWeight:
+                                  FontWeight.bold,
                                   fontSize: 16,
                                 ),
                               ),
@@ -1260,7 +1401,8 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     );
   }
 
-  Widget _buildStatItem(IconData icon, String label, String value) {
+  Widget _buildStatItem(
+      IconData icon, String label, String value) {
     return Column(
       children: [
         Icon(icon, color: Colors.red, size: 24),

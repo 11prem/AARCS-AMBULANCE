@@ -381,6 +381,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                 'distance': requestData['distance'] ?? 'N/A',
                 'priority': requestData['priority'] ?? 3,
                 'priorityLabel': requestData['priorityLabel'] ?? 'LOW',
+                'description': requestData['description'] ?? '', // ✅ ADD description field
                 'sourceCoords': sourceCoords,
                 'destCoords': destCoords,
               };
@@ -779,6 +780,49 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                   ),
                 ),
                 const SizedBox(height: 16),
+                // ✅ SHOW DESCRIPTION ONLY FOR CRITICAL PRIORITY (priority index 0)
+                if (currentEmergencyRequest!['priority'] == 0 &&
+                    currentEmergencyRequest!['description'] != null &&
+                    currentEmergencyRequest!['description'].toString().isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.medical_services,
+                                size: 16,
+                                color: Colors.red.shade700),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Emergency Condition:',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: Colors.red.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          currentEmergencyRequest!['description'].toString(),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 _buildDetailRow('Current', currentEmergencyRequest!['currentLocation']),
                 const SizedBox(height: 12),
                 _buildDetailRow('Destination', currentEmergencyRequest!['destination'] ?? 'Unknown'),
