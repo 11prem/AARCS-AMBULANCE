@@ -743,17 +743,11 @@ class _DashboardScreenState extends State<DashboardScreen>
             children: [
               Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      Icons.local_hospital,
-                      color: Colors.red.shade700,
-                      size: 20,
-                    ),
+                  // Fixed: Removed the yellow box container, kept just the icon
+                  Icon(
+                    Icons.local_hospital,
+                    color: Colors.red.shade700,
+                    size: 24,
                   ),
                   const SizedBox(width: 12),
                   Expanded(

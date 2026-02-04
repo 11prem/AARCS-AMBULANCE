@@ -1,10 +1,10 @@
-// lib/screens/dashboard.dart (Traffic Police)
+// lib/screens/dashboard.dart - TRAFFIC POLICE DASHBOARD WITH LOCAL NOTIFICATIONS
 
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'dart:math';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'emergency_response_screen.dart';
 import 'history_screen.dart';
@@ -13,12 +13,83 @@ import 'package:firebase_core/firebase_core.dart';
 import '../models/priority_model.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-// Firebase Police Service for real-time data
+// Local Notification Service - WORKING VERSION FOR 14.1.5
+class LocalNotificationService {
+  static final FlutterLocalNotificationsPlugin _notificationsPlugin =
+  FlutterLocalNotificationsPlugin();
+
+  static Future<void> initialize() async {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+    AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const DarwinInitializationSettings initializationSettingsIOS =
+    DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+
+    const InitializationSettings initializationSettings =
+    InitializationSettings(
+      android: initializationSettingsAndroid,
+      iOS: initializationSettingsIOS,
+    );
+
+    await _notificationsPlugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        print('Notification clicked: ${response.payload}');
+        // DON'T navigate to any screen - just open the app
+        // The dashboard will already show the request
+      },
+    );
+  }
+
+  static Future<void> showTrafficAlert(
+      String ambulanceId,
+      String destination,
+      String alertId,
+      ) async {
+    final AndroidNotificationDetails androidPlatformChannelSpecifics =
+    AndroidNotificationDetails(
+      'traffic_channel',
+      'Traffic Alerts',
+      channelDescription: 'Traffic clearance alerts',
+      importance: Importance.max,
+      priority: Priority.high,
+      ticker: 'Ambulance Alert',
+    );
+
+    const DarwinNotificationDetails iosPlatformChannelSpecifics =
+    DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    final NotificationDetails platformChannelSpecifics = NotificationDetails(
+      android: androidPlatformChannelSpecifics,
+      iOS: iosPlatformChannelSpecifics,
+    );
+
+    await _notificationsPlugin.show(
+      0,
+      '🚨 TRAFFIC CLEARANCE REQUEST',
+      'Ambulance $ambulanceId needs immediate clearance to $destination',
+      platformChannelSpecifics,
+      payload: alertId,
+    );
+  }
+}
+
+// Firebase Police Service
 class FirebasePoliceService {
   static final DatabaseReference _database = FirebaseDatabase.instanceFor(
     app: Firebase.app(),
-    databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+    databaseURL:
+    'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
   ).ref();
 
   static Stream<DatabaseEvent> listenToEmergencyRequests() {
@@ -29,66 +100,401 @@ class FirebasePoliceService {
         .onValue;
   }
 
+  static Stream<DatabaseEvent> listenToTrafficClearanceAlerts() {
+    return _database
+        .child('traffic_clearance_alerts')
+        .orderByChild('timestamp')
+        .limitToLast(5)
+        .onValue;
+  }
+
+  static Future<void> acknowledgeTrafficAlert(
+      String alertId, String policeId) async {
+    await _database.child('traffic_clearance_alerts').child(alertId).update({
+      'acknowledged': true,
+      'acknowledgedBy': policeId,
+      'acknowledgedAt': ServerValue.timestamp,
+      'status': 'acknowledged',
+    });
+  }
+
   static Future<void> acceptRequest(String requestId) async {
     await _database.child('emergency_requests').child(requestId).update({
       'status': 'accepted',
       'acceptedAt': ServerValue.timestamp,
     });
   }
+
+  static Future<Map<String, dynamic>?> getLatestActiveAlert() async {
+    try {
+      final snapshot = await _database
+          .child('traffic_clearance_alerts')
+          .orderByChild('status')
+          .equalTo('active')
+          .limitToLast(1)
+          .once();
+
+      if (snapshot.snapshot.exists) {
+        final alerts = snapshot.snapshot.value as Map<dynamic, dynamic>;
+        final alertId = alerts.keys.first;
+        final alertData = Map<String, dynamic>.from(alerts[alertId] as Map);
+        return {
+          'alertId': alertId,
+          'data': alertData,
+        };
+      }
+    } catch (e) {
+      print('❌ Error getting latest alert: $e');
+    }
+    return null;
+  }
 }
 
 class AARCSTrafficPoliceDashboard extends StatefulWidget {
   @override
-  _AARCSTrafficPoliceDashboardState createState() => _AARCSTrafficPoliceDashboardState();
+  _AARCSTrafficPoliceDashboardState createState() =>
+      _AARCSTrafficPoliceDashboardState();
 }
 
-class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboard> with SingleTickerProviderStateMixin {
+class _AARCSTrafficPoliceDashboardState
+    extends State<AARCSTrafficPoliceDashboard> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   bool isOnDuty = true;
   bool isConnected = true;
-  int _selectedTabIndex = 0;
 
-  // Emergency request state
   bool hasEmergencyAlert = false;
   bool hasActiveEmergencyRequest = false;
   Map<String, dynamic>? currentEmergencyRequest;
   String? currentRequestId;
+  String? currentAlertId;
 
-  // Firebase subscription
   StreamSubscription<DatabaseEvent>? _requestSubscription;
+  StreamSubscription<DatabaseEvent>? _trafficAlertSubscription;
+  Timer? _alertPollingTimer;
+  Timer? _notificationCheckTimer;
 
-  // Location tracking variables
   String currentLocationText = "Fetching location...";
   String currentLandmark = "";
   Position? currentPosition;
   StreamSubscription<Position>? _locationSubscription;
   bool isLoadingLocation = true;
 
-  // Google API Key
   final String _googleApiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
+
+  // Track last shown notification to avoid duplicates
+  String _lastShownAlertId = '';
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _tabController.addListener(() {
-      setState(() {
-        _selectedTabIndex = _tabController.index;
-      });
+
+    // Initialize notifications FIRST
+    _initializeNotifications().then((_) {
+      // Start listening and polling AFTER notifications are initialized
+      _listenToEmergencyRequests();
+      _listenToTrafficClearanceAlerts();
+      _startPollingForAlerts();
+      _startNotificationCheckTimer();
+      _startLocationTracking();
     });
-    _listenToEmergencyRequests();
-    _startLocationTracking();
+  }
+
+  Future<void> _initializeNotifications() async {
+    await LocalNotificationService.initialize();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     _requestSubscription?.cancel();
+    _trafficAlertSubscription?.cancel();
+    _alertPollingTimer?.cancel();
+    _notificationCheckTimer?.cancel();
     _locationSubscription?.cancel();
     super.dispose();
   }
 
-  // Start real-time location tracking
+  void _showAlertDialog(Map<String, dynamic> alertData, String alertId) {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.traffic, color: Colors.orange),
+            SizedBox(width: 10),
+            Text('🚨 TRAFFIC CLEARANCE REQUEST'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Ambulance: ${alertData['ambulanceId']}'),
+            const SizedBox(height: 8),
+            Text('Destination: ${alertData['destination']}'),
+            const SizedBox(height: 8),
+            Text('ETA: ${alertData['eta'] ?? 'N/A'}'),
+            const SizedBox(height: 8),
+            Text('Distance: ${alertData['distance'] ?? 'N/A'}'),
+            const SizedBox(height: 8),
+            Text('Priority: ${alertData['priorityLabel'] ?? 'MEDIUM'}'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _acknowledgeTrafficAlert(alertId);
+            },
+            child: const Text('ACKNOWLEDGE'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context); // Just close dialog, don't acknowledge
+              // Don't call _acknowledgeTrafficAlert here
+              _handleTrafficAlertForResponse(alertData, alertId);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+            ),
+            child: const Text('VIEW & RESPOND'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _startPollingForAlerts() {
+    _alertPollingTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
+      try {
+        final latestAlert = await FirebasePoliceService.getLatestActiveAlert();
+
+        if (latestAlert != null) {
+          final alertId = latestAlert['alertId'];
+          final alertData = latestAlert['data'];
+
+          // Check if this alert is already acknowledged
+          if (alertData['acknowledged'] != true && alertData['status'] == 'active') {
+            // Only show if it's a new alert
+            if (alertId != _lastShownAlertId) {
+              _lastShownAlertId = alertId;
+              _handleBackgroundAlert(alertData, alertId);
+            }
+          }
+        }
+      } catch (e) {
+        print('❌ Error polling for alerts: $e');
+      }
+    });
+  }
+
+  void _startNotificationCheckTimer() {
+    _notificationCheckTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      _checkForMissedAlerts();
+    });
+  }
+
+  Future<void> _checkForMissedAlerts() async {
+    try {
+      final latestAlert = await FirebasePoliceService.getLatestActiveAlert();
+
+      if (latestAlert != null) {
+        final alertId = latestAlert['alertId'];
+        final alertData = latestAlert['data'];
+
+        // If alert is active and not acknowledged, show notification
+        if (alertData['acknowledged'] != true &&
+            alertData['status'] == 'active' &&
+            alertId != _lastShownAlertId) {
+          await LocalNotificationService.showTrafficAlert(
+            alertData['ambulanceId'] ?? 'Unknown',
+            alertData['destination'] ?? 'Hospital',
+            alertId,
+          );
+
+          _lastShownAlertId = alertId;
+        }
+      }
+    } catch (e) {
+      print('❌ Error checking for missed alerts: $e');
+    }
+  }
+
+  void _handleBackgroundAlert(Map<String, dynamic> alertData, String alertId) {
+    // Show system notification
+    LocalNotificationService.showTrafficAlert(
+      alertData['ambulanceId'] ?? 'Unknown',
+      alertData['destination'] ?? 'Hospital',
+      alertId,
+    );
+
+    // If app is in foreground, also show dialog
+    if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showAlertDialog(alertData, alertId);
+      });
+    }
+  }
+
+  void _listenToTrafficClearanceAlerts() {
+    print("👂 Listening for traffic clearance alerts...");
+
+    _trafficAlertSubscription =
+        FirebasePoliceService.listenToTrafficClearanceAlerts().listen(
+              (DatabaseEvent event) {
+            if (event.snapshot.exists && mounted) {
+              final alerts = event.snapshot.value as Map<dynamic, dynamic>;
+
+              alerts.forEach((alertId, value) {
+                final alertData = Map<String, dynamic>.from(value as Map);
+
+                if (alertData['status'] == 'active' &&
+                    alertData['acknowledged'] != true) {
+                  print('📢 New traffic clearance alert: $alertId');
+                  _handleTrafficAlert(alertData, alertId.toString());
+                }
+              });
+            }
+          },
+          onError: (error) {
+            print('❌ Error in traffic alert listener: $error');
+          },
+        );
+  }
+
+  void _handleTrafficAlert(Map<String, dynamic> alertData, String alertId) {
+    // Update last shown alert ID
+    _lastShownAlertId = alertId;
+
+    // Show system notification
+    LocalNotificationService.showTrafficAlert(
+      alertData['ambulanceId'] ?? 'Unknown',
+      alertData['destination'] ?? 'Hospital',
+      alertId,
+    );
+
+    // If app is in foreground, show dialog and update UI
+    if (mounted) {
+      // Check if we already have this alert active
+      if (currentAlertId == alertId && hasActiveEmergencyRequest) {
+        return; // Don't show duplicate
+      }
+
+      _showAlertDialog(alertData, alertId);
+
+      setState(() {
+        hasEmergencyAlert = true;
+        hasActiveEmergencyRequest = true;
+        currentRequestId = alertId;
+        currentAlertId = alertId; // Store the alert ID
+        currentEmergencyRequest = {
+          'ambulanceId': alertData['ambulanceId'] ?? 'Unknown',
+          'destination': alertData['destination'] ?? 'Unknown',
+          'eta': alertData['eta'] ?? 'N/A',
+          'distance': alertData['distance'] ?? 'N/A',
+          'priority': alertData['priority'] ?? 3,
+          'priorityLabel': alertData['priorityLabel'] ?? 'MEDIUM',
+          'currentLocation': alertData['currentLocation'] ?? 'Unknown',
+          'status': 'active',
+          'isTrafficAlert': true,
+          'alertId': alertId,
+          'requestId': alertData['requestId'],
+        };
+      });
+
+      // Show in-app snackbar
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.traffic, color: Colors.white),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '🚨 Ambulance ${alertData['ambulanceId']} needs traffic clearance!',
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'ACKNOWLEDGE',
+            textColor: Colors.white,
+            onPressed: () {
+              _acknowledgeTrafficAlert(alertId);
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  void _handleTrafficAlertForResponse(
+      Map<String, dynamic> alertData, String alertId) {
+    if (!mounted) return;
+
+    setState(() {
+      currentAlertId = alertId;
+      hasEmergencyAlert = true;
+      hasActiveEmergencyRequest = true;
+      currentEmergencyRequest = {
+        'ambulanceId': alertData['ambulanceId'] ?? 'Unknown',
+        'destination': alertData['destination'] ?? 'Unknown',
+        'eta': alertData['eta'] ?? 'N/A',
+        'distance': alertData['distance'] ?? 'N/A',
+        'priority': alertData['priority'] ?? 3,
+        'priorityLabel': alertData['priorityLabel'] ?? 'MEDIUM',
+        'currentLocation': alertData['currentLocation'] ?? 'Unknown',
+        'status': 'active',
+        'isTrafficAlert': true,
+        'alertId': alertId,
+        'requestId': alertData['requestId'],
+      };
+    });
+
+    // Navigate to response screen after a short delay
+    Future.delayed(const Duration(milliseconds: 300), () {
+      _navigateToEmergencyResponse();
+    });
+  }
+
+  Future<void> _acknowledgeTrafficAlert(String alertId) async {
+    try {
+      await FirebasePoliceService.acknowledgeTrafficAlert(alertId, 'TP-2024-156');
+      print('✅ Traffic alert acknowledged: $alertId');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Traffic clearance request acknowledged'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+
+        // Clear the alert from UI
+        setState(() {
+          hasEmergencyAlert = false;
+          hasActiveEmergencyRequest = false;
+          currentEmergencyRequest = null;
+        });
+      }
+    } catch (e) {
+      print('❌ Error acknowledging traffic alert: $e');
+    }
+  }
+
   Future<void> _startLocationTracking() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -142,15 +548,14 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     }
   }
 
-  // ✅ UPDATED: Get nearest landmark using Google Places API
   Future<void> _updateLocationText(Position position) async {
     try {
       setState(() {
         currentPosition = position;
       });
 
-      // Get nearest landmark using Google Places Nearby Search
-      final nearbyLandmark = await _getNearestLandmark(position.latitude, position.longitude);
+      final nearbyLandmark =
+      await _getNearestLandmark(position.latitude, position.longitude);
 
       if (nearbyLandmark != null) {
         setState(() {
@@ -159,7 +564,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           isLoadingLocation = false;
         });
       } else {
-        // Fallback to reverse geocoding
         await _fallbackReverseGeocode(position);
       }
     } catch (e) {
@@ -168,33 +572,28 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     }
   }
 
-  // ✅ NEW: Get nearest landmark using Google Places API
-  Future<Map<String, dynamic>?> _getNearestLandmark(double lat, double lng) async {
+  Future<Map<String, dynamic>?> _getNearestLandmark(
+      double lat, double lng) async {
     try {
-      // Search for nearby prominent places (landmarks, establishments, points of interest)
       final url = Uri.parse(
           'https://maps.googleapis.com/maps/api/place/nearbysearch/json?'
               'location=$lat,$lng&'
               'radius=100&'
               'type=point_of_interest|establishment|transit_station|bus_station|shopping_mall|store|restaurant|cafe|bank|atm|hospital|school|university|park|stadium|museum&'
               'rankby=distance&'
-              'key=$_googleApiKey'
-      );
+              'key=$_googleApiKey');
 
       final response = await http.get(url);
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-
-        if (data['status'] == 'OK' && data['results'] != null && (data['results'] as List).isNotEmpty) {
+        if (data['status'] == 'OK' &&
+            data['results'] != null &&
+            (data['results'] as List).isNotEmpty) {
           final results = data['results'] as List;
-
-          // Get the closest landmark
           for (var place in results) {
             final name = place['name'];
             final vicinity = place['vicinity'] ?? '';
-
-            // Skip generic or unclear names
             if (name != null &&
                 !name.toString().toLowerCase().contains('unnamed') &&
                 name.toString().length > 2) {
@@ -212,7 +611,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     return null;
   }
 
-  // ✅ UPDATED: Fallback to basic reverse geocoding
   Future<void> _fallbackReverseGeocode(Position position) async {
     try {
       List<Placemark> placemarks = await placemarkFromCoordinates(
@@ -231,16 +629,21 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         } else if (place.locality != null && place.locality!.isNotEmpty) {
           address = place.locality!;
         } else {
-          address = "${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
+          address =
+          "${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
         }
 
         List<String> landmarkParts = [];
 
-        if (place.subLocality != null && place.subLocality!.isNotEmpty && place.subLocality != address) {
+        if (place.subLocality != null &&
+            place.subLocality!.isNotEmpty &&
+            place.subLocality != address) {
           landmarkParts.add(place.subLocality!);
         }
 
-        if (place.locality != null && place.locality!.isNotEmpty && place.locality != address) {
+        if (place.locality != null &&
+            place.locality!.isNotEmpty &&
+            place.locality != address) {
           landmarkParts.add(place.locality!);
         }
 
@@ -253,7 +656,8 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         });
       } else {
         setState(() {
-          currentLocationText = "${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
+          currentLocationText =
+          "${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
           currentLandmark = "Unknown Area";
           isLoadingLocation = false;
         });
@@ -261,17 +665,16 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     } catch (e) {
       print("Error reverse geocoding: $e");
       setState(() {
-        currentLocationText = "${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
+        currentLocationText =
+        "${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
         currentLandmark = "Location service unavailable";
         isLoadingLocation = false;
       });
     }
   }
 
-  // ✅ UPDATED: Convert lat/lng to landmark for emergency requests
   Future<String> _convertCoordsToLandmark(String coordString) async {
     try {
-      // Extract lat/lng from string like "Lat: 12.9716, Lng: 77.5946"
       final regex = RegExp(r'Lat:\s*([-\d.]+),\s*Lng:\s*([-\d.]+)');
       final match = regex.firstMatch(coordString);
 
@@ -279,13 +682,11 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         final lat = double.parse(match.group(1)!);
         final lng = double.parse(match.group(2)!);
 
-        // Get nearest landmark
         final landmark = await _getNearestLandmark(lat, lng);
         if (landmark != null) {
           return landmark['name'];
         }
 
-        // Fallback to reverse geocoding
         List<Placemark> placemarks = await placemarkFromCoordinates(lat, lng);
         if (placemarks.isNotEmpty) {
           Placemark place = placemarks[0];
@@ -301,134 +702,119 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
     } catch (e) {
       print("Error converting coords to landmark: $e");
     }
-    return coordString; // Return original if conversion fails
+    return coordString;
   }
 
-  // ✅ UPDATED: Filter to show only highest priority ambulance with landmark conversion
   void _listenToEmergencyRequests() {
     print("Traffic Police: Starting to listen for emergency requests...");
 
-    _requestSubscription = FirebasePoliceService.listenToEmergencyRequests().listen((DatabaseEvent event) {
-      print("Traffic Police: Firebase event received!");
-      print("Data exists: ${event.snapshot.exists}");
-      print("Event type: ${event.type}");
+    _requestSubscription =
+        FirebasePoliceService.listenToEmergencyRequests().listen((DatabaseEvent event) {
+          if (event.snapshot.exists && mounted) {
+            final requests =
+            Map<String, dynamic>.from(event.snapshot.value as Map<dynamic, dynamic>);
 
-      if (event.snapshot.exists && mounted) {
-        print("Raw data: ${event.snapshot.value}");
-        final requests = Map<String, dynamic>.from(event.snapshot.value as Map<dynamic, dynamic>);
-        print("Number of requests: ${requests.length}");
+            final pendingRequests = <String, Map<String, dynamic>>{};
+            requests.forEach((key, value) {
+              final requestData = Map<String, dynamic>.from(value);
+              final status = requestData['status']?.toString() ?? '';
+              if (status == 'pending') {
+                pendingRequests[key.toString()] = requestData;
+              }
+            });
 
-        final pendingRequests = <String, Map<String, dynamic>>{};
-        requests.forEach((key, value) {
-          final requestData = Map<String, dynamic>.from(value);
-          final status = requestData['status']?.toString() ?? '';
-          print("Request $key - Status: $status");
-          if (status == 'pending') {
-            pendingRequests[key.toString()] = requestData;
-          }
-        });
+            if (pendingRequests.isNotEmpty) {
+              var sortedEntries = pendingRequests.entries.toList()
+                ..sort((a, b) {
+                  final priorityA = a.value['priority'] ?? 3;
+                  final priorityB = b.value['priority'] ?? 3;
+                  if (priorityA != priorityB) {
+                    return (priorityA as num).compareTo(priorityB as num);
+                  }
+                  final timestampA = a.value['timestamp'] ?? 0;
+                  final timestampB = b.value['timestamp'] ?? 0;
+                  return (timestampB as num).compareTo(timestampA as num);
+                });
 
-        print("Filtered pending requests: ${pendingRequests.length}");
+              final highestPriorityEntry = sortedEntries.first;
+              final requestId = highestPriorityEntry.key;
+              final requestData = highestPriorityEntry.value;
 
-        if (pendingRequests.isNotEmpty) {
-          var sortedEntries = pendingRequests.entries.toList()
-            ..sort((a, b) {
-              final priorityA = a.value['priority'] ?? 3;
-              final priorityB = b.value['priority'] ?? 3;
-
-              if (priorityA != priorityB) {
-                return (priorityA as num).compareTo(priorityB as num);
+              if (currentRequestId == requestId && hasActiveEmergencyRequest) {
+                return;
               }
 
-              final timestampA = a.value['timestamp'] ?? 0;
-              final timestampB = b.value['timestamp'] ?? 0;
-              return (timestampB as num).compareTo(timestampA as num);
-            });
+              print("Processing HIGHEST PRIORITY request: $requestId");
 
-          final highestPriorityEntry = sortedEntries.first;
-          final requestId = highestPriorityEntry.key;
-          final requestData = highestPriorityEntry.value;
+              String currentLoc = requestData['currentLocation'] ?? 'Unknown';
+              _convertCoordsToLandmark(currentLoc).then((landmark) {
+                setState(() {
+                  hasEmergencyAlert = true;
+                  hasActiveEmergencyRequest = true;
+                  currentRequestId = requestId;
 
-          if (currentRequestId == requestId && hasActiveEmergencyRequest) {
-            print("Request $requestId already being displayed, skipping...");
-            return;
-          }
+                  final sourceCoords = requestData['sourceCoords'] is Map
+                      ? Map<String, dynamic>.from(requestData['sourceCoords'])
+                      : null;
+                  final destCoords = requestData['destCoords'] is Map
+                      ? Map<String, dynamic>.from(requestData['destCoords'])
+                      : null;
 
-          print("Processing HIGHEST PRIORITY request: $requestId");
-          print("Priority: ${requestData['priority']} - ${requestData['priorityLabel']}");
-          print("Destination: ${requestData['destination']}");
+                  currentEmergencyRequest = {
+                    'ambulanceId': requestData['ambulanceId'] ?? 'Unknown',
+                    'currentLocation': landmark,
+                    'destination': requestData['destination'] ?? 'Unknown',
+                    'eta': requestData['eta'] ?? 'Calculating...',
+                    'distance': requestData['distance'] ?? 'N/A',
+                    'priority': requestData['priority'] ?? 3,
+                    'priorityLabel': requestData['priorityLabel'] ?? 'LOW',
+                    'description': requestData['description'] ?? '',
+                    'sourceCoords': sourceCoords,
+                    'destCoords': destCoords,
+                    'isTrafficAlert': false,
+                  };
+                });
 
-          // ✅ Convert currentLocation coordinates to landmark
-          String currentLoc = requestData['currentLocation'] ?? 'Unknown';
-          _convertCoordsToLandmark(currentLoc).then((landmark) {
-            setState(() {
-              hasEmergencyAlert = true;
-              hasActiveEmergencyRequest = true;
-              currentRequestId = requestId;
-
-              final sourceCoords = requestData['sourceCoords'] is Map
-                  ? Map<String, dynamic>.from(requestData['sourceCoords'])
-                  : null;
-              final destCoords = requestData['destCoords'] is Map
-                  ? Map<String, dynamic>.from(requestData['destCoords'])
-                  : null;
-
-              currentEmergencyRequest = {
-                'ambulanceId': requestData['ambulanceId'] ?? 'Unknown',
-                'currentLocation': landmark, // ✅ Use converted landmark
-                'destination': requestData['destination'] ?? 'Unknown',
-                'eta': requestData['eta'] ?? 'Calculating...',
-                'distance': requestData['distance'] ?? 'N/A',
-                'priority': requestData['priority'] ?? 3,
-                'priorityLabel': requestData['priorityLabel'] ?? 'LOW',
-                'description': requestData['description'] ?? '', // ✅ ADD description field
-                'sourceCoords': sourceCoords,
-                'destCoords': destCoords,
-              };
-            });
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    const Icon(Icons.warning, color: Colors.white),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${requestData['priorityLabel']} PRIORITY: ${requestData['ambulanceId']} → ${requestData['destination']}',
-                      ),
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        const Icon(Icons.warning, color: Colors.white),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${requestData['priorityLabel']} PRIORITY: ${requestData['ambulanceId']} → ${requestData['destination']}',
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                backgroundColor: Colors.red,
-                duration: const Duration(seconds: 4),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-          });
-        } else {
-          print("No pending requests found, clearing alerts...");
-          if (hasEmergencyAlert || hasActiveEmergencyRequest) {
-            setState(() {
-              hasEmergencyAlert = false;
-              hasActiveEmergencyRequest = false;
-              currentEmergencyRequest = null;
-              currentRequestId = null;
-            });
+                    backgroundColor: Colors.red,
+                    duration: const Duration(seconds: 4),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              });
+            } else {
+              if (hasEmergencyAlert || hasActiveEmergencyRequest) {
+                setState(() {
+                  hasEmergencyAlert = false;
+                  hasActiveEmergencyRequest = false;
+                  currentEmergencyRequest = null;
+                  currentRequestId = null;
+                });
+              }
+            }
+          } else {
+            if (hasEmergencyAlert || hasActiveEmergencyRequest) {
+              setState(() {
+                hasEmergencyAlert = false;
+                hasActiveEmergencyRequest = false;
+                currentEmergencyRequest = null;
+                currentRequestId = null;
+              });
+            }
           }
-        }
-      } else {
-        print("No emergency requests data exists");
-        if (hasEmergencyAlert || hasActiveEmergencyRequest) {
-          setState(() {
-            hasEmergencyAlert = false;
-            hasActiveEmergencyRequest = false;
-            currentEmergencyRequest = null;
-            currentRequestId = null;
-          });
-        }
-      }
-    });
+        });
   }
 
   @override
@@ -468,11 +854,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         children: [
           const Text(
             'AARCS Traffic Police',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-            ),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
           ),
           Row(
             children: [
@@ -480,18 +862,11 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                 width: 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: isConnected ? Colors.green : Colors.red,
-                  shape: BoxShape.circle,
-                ),
+                    color: isConnected ? Colors.green : Colors.red, shape: BoxShape.circle),
               ),
               const SizedBox(width: 6),
-              Text(
-                isConnected ? 'Connected' : 'Disconnected',
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 12,
-                ),
-              ),
+              Text(isConnected ? 'Connected' : 'Disconnected',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
             ],
           ),
         ],
@@ -501,10 +876,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           padding: const EdgeInsets.only(right: 16, top: 8),
           child: Text(
             '${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ),
       ],
@@ -525,22 +897,27 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
   }
 
   Widget _buildEmergencyAlert() {
+    Color alertColor = Colors.red;
+    String alertText = 'EMERGENCY ALERT: ambulance clearance request in your zone';
+
+    if (currentEmergencyRequest != null &&
+        currentEmergencyRequest!['isTrafficAlert'] == true) {
+      alertColor = Colors.orange;
+      alertText = '🚦 TRAFFIC CLEARANCE: Ambulance needs immediate clearance';
+    }
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      color: Colors.red,
+      color: alertColor,
       child: Row(
         children: [
           const Icon(Icons.warning, color: Colors.white, size: 20),
           const SizedBox(width: 8),
-          const Expanded(
+          Expanded(
             child: Text(
-              'EMERGENCY ALERT: ambulance clearance request in your zone',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
+              alertText,
+              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
             ),
           ),
           IconButton(
@@ -585,11 +962,10 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
+              color: Colors.grey.withAlpha((255 * 0.1).round()), // 10% opacity,
+              spreadRadius: 1,
+              blurRadius: 5,
+              offset: const Offset(0, 2)),
         ],
       ),
       child: Row(
@@ -600,52 +976,40 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
               color: const Color(0xFF1976D2).withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(
-              Icons.badge,
-              color: Color(0xFF1976D2),
-              size: 24,
-            ),
+            child: const Icon(Icons.badge, color: Color(0xFF1976D2), size: 24),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Badge: TP-2024-156',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: Colors.black87,
-                  ),
-                ),
+                const Text('Badge: TP-2024-156',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Colors.black87)),
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    Icon(
-                      Icons.location_on,
-                      size: 14,
-                      color: Colors.grey[600],
-                    ),
+                    Icon(Icons.location_on, size: 14, color: Colors.grey[600]),
                     const SizedBox(width: 4),
                     if (isLoadingLocation)
                       const SizedBox(
                         width: 12,
                         height: 12,
                         child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1976D2)),
-                        ),
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                Color(0xFF1976D2))),
                       ),
                     if (isLoadingLocation) const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         currentLocationText,
-                        style: TextStyle(
-                          color: Colors.black87,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
+                        style: const TextStyle(
+                            color: Colors.black87,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -657,10 +1021,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                     padding: const EdgeInsets.only(top: 4, left: 18),
                     child: Text(
                       currentLandmark,
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -677,16 +1038,14 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                     isOnDuty = value;
                   });
                 },
-                activeColor: const Color(0xFF4CAF50),
+                activeThumbColor: const Color(0xFF4CAF50),
+                activeTrackColor: const Color(0xFF4CAF50).withOpacity(0.5),
               ),
-              Text(
-                'ON DUTY',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: isOnDuty ? const Color(0xFF4CAF50) : Colors.grey,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              Text('ON DUTY',
+                  style: TextStyle(
+                      fontSize: 10,
+                      color: isOnDuty ? const Color(0xFF4CAF50) : Colors.grey,
+                      fontWeight: FontWeight.w600)),
             ],
           ),
         ],
@@ -695,15 +1054,18 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
   }
 
   Widget _buildEmergencyRequestCard() {
+    final isTrafficAlert = currentEmergencyRequest!['isTrafficAlert'] == true;
     final priority = EmergencyPriority.values[currentEmergencyRequest!['priority'] ?? 3];
     final priorityConfig = PriorityConfig.fromPriority(priority);
+    final cardColor = isTrafficAlert ? Colors.orange : priorityConfig.backgroundColor;
+    final borderColor = isTrafficAlert ? Colors.orange : priorityConfig.color;
 
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: priorityConfig.color, width: 2),
+        border: Border.all(color: borderColor, width: 2),
         boxShadow: [
           BoxShadow(
             color: Colors.grey.withOpacity(0.1),
@@ -719,7 +1081,7 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
             width: double.infinity,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: priorityConfig.backgroundColor,
+              color: cardColor,
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(10),
                 topRight: Radius.circular(10),
@@ -730,33 +1092,34 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: priorityConfig.color,
+                    color: borderColor,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Icon(
-                    priorityConfig.icon,
+                    isTrafficAlert ? Icons.traffic : priorityConfig.icon,
                     color: Colors.white,
                     size: 16,
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  'EMERGENCY REQUEST',
-                  style: TextStyle(
-                    color: priorityConfig.color,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                Expanded(
+                  child: Text(
+                    isTrafficAlert ? 'TRAFFIC CLEARANCE REQUEST' : 'EMERGENCY REQUEST',
+                    style: TextStyle(
+                      color: borderColor,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
-                const Spacer(),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                    color: priorityConfig.color,
+                    color: borderColor,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    priorityConfig.label,
+                    isTrafficAlert ? 'TRAFFIC' : priorityConfig.label,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 10,
@@ -780,75 +1143,107 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
                   ),
                 ),
                 const SizedBox(height: 16),
-                // ✅ SHOW DESCRIPTION ONLY FOR CRITICAL PRIORITY (priority index 0)
-                if (currentEmergencyRequest!['priority'] == 0 &&
-                    currentEmergencyRequest!['description'] != null &&
-                    currentEmergencyRequest!['description'].toString().isNotEmpty)
+                if (isTrafficAlert)
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
                     margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
-                      color: Colors.red.shade50,
+                      color: Colors.orange.shade50,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.red.shade200),
+                      border: Border.all(color: Colors.orange.shade200),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Icon(Icons.medical_services,
-                                size: 16,
-                                color: Colors.red.shade700),
+                            Icon(Icons.traffic, size: 16, color: Colors.orange.shade700),
                             const SizedBox(width: 6),
                             Text(
-                              'Emergency Condition:',
+                              'Traffic Clearance Request:',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 13,
-                                color: Colors.red.shade700,
+                                color: Colors.orange.shade700,
                               ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          currentEmergencyRequest!['description'].toString(),
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.black87,
-                          ),
+                          'Ambulance requires immediate traffic clearance to reach destination quickly.',
+                          style: const TextStyle(fontSize: 14, color: Colors.black87),
                         ),
                       ],
                     ),
                   ),
-                _buildDetailRow('Current', currentEmergencyRequest!['currentLocation']),
+                _buildDetailRow(
+                  'Current',
+                  currentEmergencyRequest!['currentLocation'] ?? 'Unknown',
+                ),
                 const SizedBox(height: 12),
-                _buildDetailRow('Destination', currentEmergencyRequest!['destination'] ?? 'Unknown'),
+                _buildDetailRow(
+                  'Destination',
+                  currentEmergencyRequest!['destination'] ?? 'Unknown',
+                ),
                 const SizedBox(height: 12),
                 _buildDetailRow('ETA', currentEmergencyRequest!['eta'] ?? '--'),
                 const SizedBox(height: 12),
                 _buildDetailRow('Distance', currentEmergencyRequest!['distance'] ?? '--'),
                 const SizedBox(height: 20),
+                if (isTrafficAlert)
+                  Column(
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () {
+                            if (currentEmergencyRequest!['alertId'] != null) {
+                              _acknowledgeTrafficAlert(currentEmergencyRequest!['alertId']);
+                            }
+                            _navigateToEmergencyResponse();
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange,
+                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: const Text(
+                            'ACKNOWLEDGE & CLEAR',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: _navigateToEmergencyResponse,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: priorityConfig.color,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      backgroundColor: borderColor,
+                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    child: const Text(
-                      'CLEAR ROUTE',
-                      style: TextStyle(
+                    child: Text(
+                      isTrafficAlert ? 'VIEW DETAILS' : 'CLEAR ROUTE',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                        fontSize: 14,
                       ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                 ),
@@ -862,19 +1257,21 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
 
   Widget _buildDetailRow(String label, String value) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 80,
+          width: 90, // Increased width slightly
           child: Text(
             '$label:',
             style: TextStyle(
               color: Colors.grey[600],
               fontSize: 14,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ),
-        const SizedBox(width: 12),
-        Expanded(
+        const SizedBox(width: 8), // Reduced from 12
+        Expanded( // Wrap in Expanded
           child: Text(
             value,
             style: const TextStyle(
@@ -882,6 +1279,8 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
               fontSize: 14,
               color: Colors.black87,
             ),
+            maxLines: 2, // Allow wrapping
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],
@@ -897,11 +1296,10 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
+              color: Colors.grey.withOpacity(0.1),
+              spreadRadius: 1,
+              blurRadius: 5,
+              offset: const Offset(0, 2))
         ],
       ),
       child: Column(
@@ -909,39 +1307,27 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: const Color(0xFF1976D2).withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.shield,
-              size: 48,
-              color: Color(0xFF1976D2),
-            ),
+                color: const Color(0xFF1976D2).withOpacity(0.1),
+                shape: BoxShape.circle),
+            child: const Icon(Icons.shield, size: 48, color: Color(0xFF1976D2)),
           ),
           const SizedBox(height: 16),
           const Text(
             'No Active Requests',
             style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87),
           ),
           const SizedBox(height: 8),
           Text(
             'All clear in your zone',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
+            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
           ),
           const SizedBox(height: 12),
           Text(
             'Last updated: ${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[500],
-            ),
+            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
           ),
         ],
       ),
@@ -963,28 +1349,17 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
           const CircleAvatar(
             radius: 40,
             backgroundColor: Color(0xFF1976D2),
-            child: Icon(
-              Icons.person,
-              size: 40,
-              color: Colors.white,
-            ),
+            child: Icon(Icons.person, size: 40, color: Colors.white),
           ),
-          SizedBox(height: 16),
-          Text(
+          const SizedBox(height: 16),
+          const Text(
             'Inspector Raggul J',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
           ),
-          SizedBox(height: 8),
-          Text(
+          const SizedBox(height: 8),
+          const Text(
             'Badge: TP-2024-156',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey,
-            ),
+            style: TextStyle(fontSize: 14, color: Colors.grey),
           ),
         ],
       ),
@@ -992,24 +1367,29 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
   }
 
   void _navigateToEmergencyResponse() async {
-    if (currentEmergencyRequest != null && currentRequestId != null) {
+    if (currentEmergencyRequest != null) {
       try {
         print("Navigating to Emergency Response Screen");
-        print("Request ID: $currentRequestId");
-        print("Emergency Request data: $currentEmergencyRequest");
 
         final requestDataCopy = Map<String, dynamic>.from(currentEmergencyRequest!);
-        final requestIdCopy = currentRequestId!;
+
+        // If it's a traffic alert, acknowledge it
+        if (currentEmergencyRequest!['isTrafficAlert'] == true &&
+            currentEmergencyRequest!['alertId'] != null) {
+          await _acknowledgeTrafficAlert(currentEmergencyRequest!['alertId']);
+        }
+
+        // If it has a requestId from emergency_requests, accept it
+        if (currentRequestId != null &&
+            currentEmergencyRequest!['isTrafficAlert'] != true) {
+          await FirebasePoliceService.acceptRequest(currentRequestId!);
+          print("Request accepted in Firebase");
+        }
 
         setState(() {
           hasActiveEmergencyRequest = false;
           hasEmergencyAlert = false;
-          currentEmergencyRequest = null;
-          currentRequestId = null;
         });
-
-        await FirebasePoliceService.acceptRequest(requestIdCopy);
-        print("Request accepted in Firebase");
 
         if (mounted) {
           Navigator.push(
@@ -1043,8 +1423,6 @@ class _AARCSTrafficPoliceDashboardState extends State<AARCSTrafficPoliceDashboar
       }
     } else {
       print("No emergency request data available");
-      print("currentEmergencyRequest: $currentEmergencyRequest");
-      print("currentRequestId: $currentRequestId");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

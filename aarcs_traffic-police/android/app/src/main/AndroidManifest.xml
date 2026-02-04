@@ -1,40 +1,25 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Internet permission for Maps API calls -->
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Permissions -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
-    <!-- Location permissions for current location -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-
-    <!-- Optional: Wake lock for keeping app active during emergency -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <!-- Optional: Phone permission for emergency calls -->
-    <uses-permission android:name="android.permission.CALL_PHONE" />
-
-    <!-- Network state for checking connectivity -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- For Android 12+ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
-        android:label="Emergency Response"
+        android:label="AARCS Traffic Police"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:networkSecurityConfig="@xml/network_security_config"
-        android:allowBackup="true"
-        android:supportsRtl="true">
+        android:usesCleartextTraffic="true"
+        android:allowBackup="true">
 
-        <!-- CRITICAL: Google Maps API Key -->
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyBJkB2VDuG561xAnfKbfUBoBW7ZMS7oomY"/>
-
-        <!-- Main Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -46,7 +31,8 @@
                  to determine the Window background behind the Flutter UI. -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
-                android:resource="@style/NormalTheme" />
+                android:resource="@style/NormalTheme"
+                />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -59,26 +45,6 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
     </application>
-
-    <!-- Required to query activities that can process text -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
-        </intent>
-
-        <!-- For phone calls -->
-        <intent>
-            <action android:name="android.intent.action.CALL" />
-            <data android:scheme="tel" />
-        </intent>
-
-        <!-- For maps/navigation -->
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <data android:scheme="geo" />
-        </intent>
-    </queries>
-
 </manifest>

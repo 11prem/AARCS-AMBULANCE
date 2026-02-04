@@ -17,6 +17,8 @@ dependencies:
   firebase_core: ^3.6.0
   firebase_auth: ^5.3.1        # ← ADD THIS for authentication
   firebase_database: ^11.1.4
+  flutter_local_notifications: ^14.1.2
+
 
   # Maps & Location
   google_maps_flutter: ^2.9.0

@@ -1,0 +1,46 @@
+plugins {
+    id "com.android.application"
+    id "com.google.gms.google-services"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+android {
+    namespace "com.example.aarcs_traffic"
+    compileSdkVersion flutter.compileSdkVersion
+            ndkVersion flutter.ndkVersion
+
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_1_8
+                        targetCompatibility JavaVersion.VERSION_1_8
+                        coreLibraryDesugaringEnabled true
+            }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    defaultConfig {
+        applicationId "com.example.aarcs_traffic"
+        minSdkVersion flutter.minSdkVersion
+                targetSdkVersion flutter.targetSdkVersion
+                versionCode flutter.versionCode
+                versionName flutter.versionName
+                multiDexEnabled true
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source "../.."
+}
+
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
+    implementation 'androidx.multidex:multidex:2.0.1'
+}
