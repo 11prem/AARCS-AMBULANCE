@@ -1,0 +1,129 @@
+{
+  "timestamp": "2026-02-11T13:05:34.986498",
+  "emergency_info": {
+    "type": "fire",
+    "location": "Tambaram, India",
+    "urgency": "Normal",
+    "description": "fire fire",
+    "location_details": {
+      "address": "Tambaram, India",
+      "latitude": 12.9229,
+      "longitude": 80.1275,
+      "in_service_area": true
+    }
+  },
+  "ambulance_data": {
+    "id": "AMB-108-001",
+    "status": "dispatched",
+    "distance_km": 19.35,
+    "speed_kmh": 0,
+    "eta_minutes": 39.0,
+    "departure_time": "--:--:--",
+    "arrival_time": "--:--:--",
+    "last_update": "13:05:27"
+  },
+  "conversation": [
+    {
+      "time": "13:03:09",
+      "speaker": "ai",
+      "message": "Hello, this is 108 emergency service. I'm here to help you."
+    },
+    {
+      "time": "13:03:13",
+      "speaker": "ai",
+      "message": "What kind of emergency are you facing?"
+    },
+    {
+      "time": "13:03:21",
+      "speaker": "user",
+      "message": "fire fire"
+    },
+    {
+      "time": "13:03:23",
+      "speaker": "ai",
+      "message": "Where are you located right now?"
+    },
+    {
+      "time": "13:03:30",
+      "speaker": "user",
+      "message": "Tambaram"
+    },
+    {
+      "time": "13:03:33",
+      "speaker": "ai",
+      "message": "Is anyone injured?"
+    },
+    {
+      "time": "13:03:47",
+      "speaker": "user",
+      "message": "no"
+    },
+    {
+      "time": "13:03:50",
+      "speaker": "ai",
+      "message": "Are you in a safe place?"
+    },
+    {
+      "time": "13:04:03",
+      "speaker": "ai",
+      "message": "Are you in a safe place?"
+    },
+    {
+      "time": "13:04:16",
+      "speaker": "ai",
+      "message": "Are you in a safe place?"
+    },
+    {
+      "time": "13:04:42",
+      "speaker": "ai",
+      "message": "Are you in a safe place?"
+    },
+    {
+      "time": "13:04:51",
+      "speaker": "user",
+      "message": "no"
+    },
+    {
+      "time": "13:04:53",
+      "speaker": "ai",
+      "message": "Can you describe what happened?"
+    },
+    {
+      "time": "13:05:07",
+      "speaker": "ai",
+      "message": "Can you describe what happened?"
+    },
+    {
+      "time": "13:05:20",
+      "speaker": "ai",
+      "message": "Can you describe what happened?"
+    },
+    {
+      "time": "13:05:27",
+      "speaker": "user",
+      "message": "no"
+    },
+    {
+      "time": "13:05:32",
+      "speaker": "ai",
+      "message": "Help is on the way. Ambulance arriving in approximately 39 minutes."
+    }
+  ],
+  "call_summary": {
+    "emergency_type": "fire",
+    "location": "Tambaram",
+    "duration": "0:02:29.462625",
+    "questions_asked": 10,
+    "injuries": false,
+    "is_safe": false,
+    "urgency": "urgent",
+    "call_id": 11,
+    "timestamp": "2026-02-11 13:03:03",
+    "status": "completed",
+    "location_details": {
+      "address": "Tambaram, India",
+      "coordinates": "12.9229, 80.1275"
+    }
+  },
+  "call_duration": "0:02:31.491066"
+}

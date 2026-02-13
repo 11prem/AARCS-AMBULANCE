@@ -1,0 +1,47 @@
+{
+  "training_samples": [
+    ["car accident on highway", "accident"],
+    ["two vehicles collided", "accident"],
+    ["motorcycle crash", "accident"],
+    ["hit by a car", "accident"],
+    ["road accident near mall", "accident"],
+    ["vehicle overturned", "accident"],
+    ["bike accident", "accident"],
+    ["collision on main road", "accident"],
+    ["pedestrian hit by vehicle", "accident"],
+    ["bus accident with injuries", "accident"],
+    
+    ["heart attack", "medical"],
+    ["chest pain and breathing difficulty", "medical"],
+    ["my father is unconscious", "medical"],
+    ["stroke symptoms", "medical"],
+    ["severe bleeding", "medical"],
+    ["broken bones", "medical"],
+    ["high fever and seizures", "medical"],
+    ["breathing problems", "medical"],
+    ["pregnant woman in labor", "medical"],
+    ["diabetic emergency", "medical"],
+    ["allergic reaction", "medical"],
+    ["choking emergency", "medical"],
+    
+    ["house on fire", "fire"],
+    ["building burning", "fire"],
+    ["fire in kitchen", "fire"],
+    ["smoke coming from building", "fire"],
+    ["gas cylinder explosion", "fire"],
+    ["electrical fire", "fire"],
+    ["forest fire spreading", "fire"],
+    
+    ["physical assault", "assault"],
+    ["attacked by someone", "assault"],
+    ["domestic violence", "assault"],
+    ["stabbing incident", "assault"],
+    ["fight with injuries", "assault"],
+    ["robbery in progress", "assault"],
+    
+    ["need help", "other"],
+    ["emergency", "other"],
+    ["not sure what happened", "other"],
+    ["strange situation", "other"]
+  ]
+}

@@ -1,0 +1,17 @@
+SpeechRecognition
+pyttsx3
+pyaudio
+pipwin
+SpeechRecognition
+pyttsx3
+sounddevice
+soundfile
+pywin32
+geopy
+scikit-learn
+nltk
+flask
+flask-cors
+fuzzywuzzy
+python-Levenshtein
+matplotlib
