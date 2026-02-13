@@ -1,0 +1,105 @@
+/* ===== STATUS BADGES - LARGER FONTS ===== */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 12px 24px;
+    border-radius: 40px;
+    font-size: 18px;
+    font-weight: 700;
+    gap: 12px;
+    letter-spacing: 0.5px;
+    margin-bottom: 24px;
+}
+
+.status-critical {
+    background: #ffebee;
+    color: var(--danger);
+    border: 2px solid var(--danger);
+}
+
+.status-active {
+    background: #e8f5e9;
+    color: var(--success);
+    border: 2px solid var(--success);
+}
+
+.status-pending {
+    background: #fff3e0;
+    color: var(--warning);
+    border: 2px solid var(--warning);
+}
+
+/* ===== LIVE INDICATOR ===== */
+.live-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.live-dot {
+    width: 12px;
+    height: 12px;
+    background: var(--success);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+/* ===== ERROR MESSAGE ===== */
+.error-message {
+    color: var(--danger);
+    background: #ffebee;
+    padding: 20px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 18px;
+    font-weight: 500;
+    border-left: 6px solid var(--danger);
+}
+
+/* ===== LOADING STATES ===== */
+.loading-state {
+    text-align: center;
+    padding: 100px 20px;
+    color: var(--gray);
+}
+
+.loading-spinner {
+    width: 60px;
+    height: 60px;
+    border: 5px solid var(--gray-light);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 24px;
+}
+
+.loading-state p {
+    font-size: 20px;
+}
+
+/* ===== EMPTY STATES ===== */
+.empty-state {
+    text-align: center;
+    padding: 100px 20px;
+    color: var(--gray);
+}
+
+.empty-state i {
+    font-size: 80px;
+    opacity: 0.5;
+    margin-bottom: 24px;
+}
+
+.empty-state h3 {
+    color: var(--dark);
+    margin-bottom: 16px;
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.empty-state p {
+    font-size: 18px;
+}

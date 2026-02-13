@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AARCS Central Command Dashboard</title>
+    
+    <!-- Fonts & Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+    <link rel="stylesheet" href="css/history.css">
+</head>
+<body>
+    <!-- Login Page - Visible by Default (CSS controls display) -->
+    <div class="login-page" id="loginPage">
+        <div class="login-card">
+            <div class="login-header">
+                <i class="fas fa-ambulance"></i>
+                <h1>AARCS</h1>
+                <p>Emergency Response Monitoring System</p>
+            </div>
+            
+            <div class="error-message" id="errorMessage" style="display: none;">
+                <i class="fas fa-exclamation-circle"></i> Invalid credentials. Please try again.
+            </div>
+            
+            <div class="input-group">
+                <label for="username"><i class="fas fa-user"></i> Username</label>
+                <input type="text" id="username" placeholder="Enter your username" value="admin">
+            </div>
+            
+            <div class="input-group">
+                <label for="password"><i class="fas fa-lock"></i> Password</label>
+                <input type="password" id="password" placeholder="Enter your password" value="admin">
+            </div>
+            
+            <button class="login-btn" id="loginBtn">
+                <i class="fas fa-sign-in-alt"></i> Login to Dashboard
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Dashboard - Hidden by Default (CSS controls display) -->
+    <div class="dashboard-container" id="dashboard">
+        <div class="container">
+            <!-- Header -->
+            <div class="dashboard-header">
+                <div class="header-brand">
+                    <i class="fas fa-ambulance"></i>
+                    <h1>AARCS <span>Central Dashboard</span></h1>
+                </div>
+            </div>
+
+            <!-- Dashboard Layout with Sidebar - 25% / 75% -->
+            <div class="dashboard-layout">
+                <!-- Left Sidebar Navigation - 25% -->
+                <div class="dashboard-sidebar">
+                    <div class="sidebar-header">
+                        <h3>
+                            <i class="fas fa-tachometer-alt"></i>
+                            Command Center
+                        </h3>
+                    </div>
+                    
+                    <div class="sidebar-nav">
+                        <button class="nav-btn active" id="liveTripBtn">
+                            <i class="fas fa-satellite-dish"></i>
+                            Live Trip Updates
+                            <span class="live-indicator" style="display: none; margin-left: auto;">
+                                <span class="live-dot"></span>
+                            </span>
+                        </button>
+                        <button class="nav-btn" id="historyBtn">
+                            <i class="fas fa-history"></i>
+                            Trip History
+                        </button>
+                    </div>
+                    
+                    <div class="sidebar-footer">
+                        <div class="user-info">
+                            <i class="fas fa-user-shield"></i>
+                            <div class="user-details">
+                                <div class="user-name" id="currentUser">Admin User</div>
+                                <div class="user-role">Emergency Controller</div>
+                            </div>
+                        </div>
+                        <button class="logout-btn" id="logoutBtn">
+                            <i class="fas fa-sign-out-alt"></i>
+                            Logout
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Main Content Area - 75% -->
+                <div class="dashboard-main">
+                    <!-- Live Trip Updates Page -->
+                    <div class="live-trip-container" id="liveTripPage">
+                        <!-- Ambulance Section -->
+                        <div class="dashboard-section">
+                            <div class="section-header ambulance">
+                                <h2><i class="fas fa-ambulance"></i> Ambulance Live Tracking</h2>
+                                <span class="update-time">Last updated: <span id="ambulanceUpdateTime">--:--:--</span></span>
+                            </div>
+                            
+                            <div class="section-content">
+                                <div class="status-badge status-active" id="ambulanceStatus">
+                                    <i class="fas fa-exclamation-triangle"></i> ACTIVE EMERGENCY
+                                </div>
+                                
+                                <div class="info-grid" id="ambulanceInfo"></div>
+                                
+                                <!-- Patient Info -->
+                                <div class="patient-info-card">
+                                    <div class="patient-info-header">
+                                        <i class="fas fa-user-injured"></i>
+                                        <h3>Patient Information (NLP Agent)</h3>
+                                    </div>
+                                    <div id="patientDetails"></div>
+                                </div>
+                                
+                                <!-- Timeline -->
+                                <div class="timeline">
+                                    <h3><i class="fas fa-stream"></i> Emergency Timeline</h3>
+                                    <div class="timeline-container" id="timelineItems"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+
+
+
+                        <!-- Traffic Police Section -->
+                        <div class="dashboard-section">
+                            <div class="section-header">
+                                <h2><i class="fas fa-traffic-light"></i> Traffic Police Clearance</h2>
+                                <span class="update-time">Last updated: <span id="policeUpdateTime">--:--:--</span></span>
+                            </div>
+                            
+                            <div class="section-content">
+                                <div class="info-grid" id="policeInfo"></div>
+                                
+                                <div class="timeline">
+                                    <h3><i class="fas fa-clipboard-check"></i> Clearance Status</h3>
+                                    <div class="timeline-container" id="clearanceStatus"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- History Page -->
+                    <div class="history-container" id="historyPage">
+                        <div class="history-filters">
+                            <div class="filter-group">
+                                <select class="filter-select" id="statusFilter">
+                                    <option value="all">All Status</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="accepted">In Progress</option>
+                                    <option value="cancelled">Cancelled</option>
+                                </select>
+                                <select class="filter-select" id="priorityFilter">
+                                    <option value="all">All Priorities</option>
+                                    <option value="0">Critical</option>
+                                    <option value="1">High</option>
+                                    <option value="2">Medium</option>
+                                    <option value="3">Low</option>
+                                </select>
+                            </div>
+                            <div class="search-box">
+                                <i class="fas fa-search"></i>
+                                <input type="text" id="searchInput" placeholder="Search by ambulance ID or hospital...">
+                            </div>
+                        </div>
+                        
+                        <div class="history-stats" id="historyStats"></div>
+                        
+                        <div class="history-list">
+                            <div class="history-list-header">
+                                <div>Trip ID / Ambulance</div>
+                                <div>Destination</div>
+                                <div>Date</div>
+                                <div>Priority</div>
+                                <div>Status</div>
+                                <div></div>
+                            </div>
+                            <div id="historyListContainer"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-auth-compat.js"></script>
+
+    <!-- JavaScript Files -->
+    <script src="js/firebase-config.js"></script>
+    <script src="js/utils/helpers.js"></script>
+    <script src="js/services/firebase-service.js"></script>
+    <script src="js/components/history-card.js"></script>
+    <script src="js/pages/login.js"></script>
+    <script src="js/pages/dashboard.js"></script>
+    <script src="js/pages/history.js"></script>
+    <script src="js/pages/app.js"></script>
+</body>
+</html>
