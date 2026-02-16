@@ -1,4 +1,4 @@
-# main_ai.py - Fixed with voice debugging
+# main_ai.py - Fixed with voice debugging and Firebase integration
 import os
 import sys
 from datetime import datetime
@@ -21,6 +21,8 @@ try:
     from ml.ml_classifier import EmergencyClassifier
     from modules.enhanced_parser import EnhancedParser
     from ai_question_generator import DynamicDialogueManager
+    # NEW: Import Firebase client
+    from firebase_client import FirebaseClient
     print("✅ All imports successful")
 except ImportError as e:
     print(f"❌ Import Error: {e}")
@@ -36,6 +38,7 @@ except ImportError as e:
         from scripts.ml.ml_classifier import EmergencyClassifier
         from scripts.modules.enhanced_parser import EnhancedParser
         from ai_question_generator import DynamicDialogueManager
+        from scripts.firebase_client import FirebaseClient
         print("✅ Imports successful via scripts path")
     except ImportError as e2:
         print(f"❌ Still getting import error: {e2}")
@@ -189,18 +192,29 @@ class SimpleDialogueManager:
 def main():
     print("=" * 80)
     print("🚑 108 EMERGENCY VOICE AGENT - DEBUG VERSION")
-    print("   With Voice Debugging & Fallback")
+    print("   With Voice Debugging & Firebase Integration")
     print("=" * 80)
+    
+    # Initialize Firebase client
+    firebase = FirebaseClient()
     
     # Track call start time
     call_start_time = datetime.now()
+    
+    # Start call in Firebase
+    call_id = firebase.start_call()
+    if call_id:
+        print(f"📱 Firebase Call ID: {call_id}")
+    
+    # Log welcome message to Firebase
+    welcome_msg = "Hello, this is 108 emergency service. I'm here to help you."
+    firebase.log_message('agent', welcome_msg)
     
     # Notify monitor about call start
     send_to_monitor('call_started', {'start_time': call_start_time.isoformat()})
     
     # Initialize all components
-    # voice_in_raw is already initialized above with ReliableVoiceInput fallback
-    voice_in = DebugVoiceInput(voice_in_raw)  # Use debug wrapper
+    voice_in = DebugVoiceInput(voice_in_raw)
     voice_out = VoiceOutput()
     parser = IntentParser()
     enhanced_parser = EnhancedParser()
@@ -212,7 +226,6 @@ def main():
     dialogue = SimpleDialogueManager()
     
     # Welcome message
-    welcome_msg = "Hello, this is 108 emergency service. I'm here to help you."
     voice_out.speak(welcome_msg)
     send_to_monitor('ai_response', {'text': welcome_msg})
     
@@ -222,12 +235,18 @@ def main():
     
     # Conversation loop
     question_count = 0
+    conversation_log = []  # Store for summary
+    
     while not dialogue.is_complete():
         question = dialogue.get_current_question()
         
         if question:
             question_count += 1
             print(f"\n📝 Question {question_count}: {question}")
+            
+            # Log question to Firebase
+            firebase.log_message('agent', question)
+            
             voice_out.speak(question)
             send_to_monitor('ai_response', {'text': question})
             
@@ -238,6 +257,10 @@ def main():
             
             if success and response:
                 print(f"✅ Response received: '{response}'")
+                
+                # Log response to Firebase
+                firebase.log_message('user', response)
+                
                 send_to_monitor('user_speech', {'text': response})
                 
                 # Process response
@@ -247,6 +270,7 @@ def main():
                 if question_count == 1:
                     emergency_type = dialogue.responses.get('emergency_type', 'unknown')
                     print(f"🔍 Emergency type identified: {emergency_type.upper()}")
+                    firebase.update_emergency_info('type', emergency_type)
                     send_to_monitor('emergency_info', {
                         'type': emergency_type,
                         'description': response
@@ -254,10 +278,13 @@ def main():
                 elif question_count == 2:
                     location = dialogue.responses.get('location', '')
                     print(f"📍 Location identified: {location}")
+                    firebase.update_emergency_info('location_text', location)
                     send_to_monitor('location_text', {'text': location})
             else:
                 print("⚠️ No valid response, asking again...")
-                voice_out.speak("I didn't understand. Could you please repeat?")
+                no_response_msg = "I didn't understand. Could you please repeat?"
+                firebase.log_message('agent', no_response_msg)
+                voice_out.speak(no_response_msg)
         else:
             print("\n✅ All questions completed")
             break
@@ -305,16 +332,16 @@ def main():
     
     # Save call to database
     try:
-        call_id = db.save_call(call_data, location_data)
-        print(f"✅ Call saved with Database ID: {call_id}")
+        call_db_id = db.save_call(call_data, location_data)
+        print(f"✅ Call saved with Database ID: {call_db_id}")
     except Exception as e:
         print(f"⚠️ Database error: {e}")
-        call_id = 1  # Default ID for testing
+        call_db_id = 1  # Default ID for testing
     
     print("\n" + "=" * 80)
     print("📋 CALL SUMMARY")
     print("=" * 80)
-    print(f"Call ID: {call_id}")
+    print(f"Call ID: {call_db_id}")
     print(f"Emergency Type: {call_data['emergency_type'].upper()}")
     print(f"Questions Asked: {question_count}")
     
@@ -336,6 +363,8 @@ def main():
     print("STEP 4: DISPATCH AMBULANCE")
     print("=" * 80)
     
+    ambulance_info = None
+    
     # Dispatch ambulance
     if location_data:
         # Mock ambulance fleet
@@ -353,6 +382,7 @@ def main():
             )
             
             if nearest:
+                ambulance_info = nearest
                 print(f"🚑 Ambulance: {nearest['id']}")
                 print(f"   Distance: {nearest['distance_km']} km")
                 print(f"   ETA: {nearest['eta_minutes']} minutes")
@@ -367,7 +397,7 @@ def main():
                 
                 # Update database if possible
                 try:
-                    db.update_ambulance_dispatch(call_id, nearest['id'], int(nearest['eta_minutes']))
+                    db.update_ambulance_dispatch(call_db_id, nearest['id'], int(nearest['eta_minutes']))
                 except:
                     pass
                 
@@ -381,44 +411,71 @@ def main():
                     message = f"Ambulance has been dispatched. Estimated arrival time is {int(nearest['eta_minutes'])} minutes."
                 
                 voice_out.speak(message)
+                firebase.log_message('agent', message)
                 send_to_monitor('ai_response', {'text': message})
             else:
                 print("⚠️ No ambulances available")
                 message = "All ambulances are currently busy. Manual dispatch initiated."
                 voice_out.speak(message)
+                firebase.log_message('agent', message)
                 send_to_monitor('ai_response', {'text': message})
                 
         except Exception as e:
             print(f"⚠️ Ambulance dispatch error: {e}")
             message = "We're having trouble finding an ambulance. Manual dispatch initiated."
             voice_out.speak(message)
+            firebase.log_message('agent', message)
             send_to_monitor('ai_response', {'text': message})
     else:
         print("⚠️ Location not confirmed - manual dispatch required")
         message = "We couldn't confirm your location. Our team will call you back shortly."
         voice_out.speak(message)
+        firebase.log_message('agent', message)
         send_to_monitor('ai_response', {'text': message})
     
     # Generate final summary
     call_duration = datetime.now() - call_start_time
+    
+    # Build comprehensive summary for Firebase
     call_summary = {
-        'emergency_type': call_data['emergency_type'],
-        'location': call_data['location'],
-        'duration': str(call_duration),
-        'questions_asked': question_count,
-        'injuries': call_data.get('injuries'),
-        'is_safe': call_data.get('is_safe'),
-        'urgency': call_data.get('urgency_level', 'normal'),
-        'call_id': call_id,
-        'timestamp': call_start_time.strftime("%Y-%m-%d %H:%M:%S"),
-        'status': 'completed'
+        'timestamp': datetime.now().isoformat(),
+        'emergency_info': {
+            'type': call_data['emergency_type'],
+            'location': call_data['location'],
+            'urgency': call_data.get('urgency_level', 'normal'),
+            'description': call_data.get('description', ''),
+            'location_details': location_data if location_data else None
+        },
+        'ambulance_data': {
+            'id': ambulance_info['id'] if ambulance_info else None,
+            'status': 'dispatched' if ambulance_info else 'pending',
+            'distance_km': ambulance_info['distance_km'] if ambulance_info else None,
+            'eta_minutes': ambulance_info['eta_minutes'] if ambulance_info else None
+        } if ambulance_info else {},
+        'conversation': [],  # We'll need to build this from the actual conversation
+        'call_summary': {
+            'emergency_type': call_data['emergency_type'],
+            'location': call_data['location'],
+            'duration': str(call_duration),
+            'questions_asked': question_count,
+            'injuries': call_data.get('injuries'),
+            'is_safe': call_data.get('is_safe'),
+            'urgency': call_data.get('urgency_level', 'normal'),
+            'call_id': call_db_id,
+            'timestamp': call_start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            'status': 'completed'
+        },
+        'call_duration': str(call_duration)
     }
     
     if location_data:
-        call_summary['location_details'] = {
+        call_summary['call_summary']['location_details'] = {
             'address': location_data['formatted_address'],
             'coordinates': f"{location_data['latitude']:.4f}, {location_data['longitude']:.4f}"
         }
+    
+    # End call and save summary to Firebase
+    firebase.end_call(call_summary)
     
     # Send final summary to monitor
     send_to_monitor('call_summary', call_summary)
@@ -432,7 +489,7 @@ def main():
     print("\n" + "=" * 80)
     print("📋 FINAL CALL REPORT")
     print("=" * 80)
-    print(f"Call ID: {call_id}")
+    print(f"Call ID: {call_db_id}")
     print(f"Start Time: {call_start_time.strftime('%H:%M:%S')}")
     print(f"Duration: {call_duration}")
     print(f"Emergency Type: {call_data['emergency_type'].upper()}")
@@ -441,10 +498,10 @@ def main():
     if location_data:
         print(f"Verified Address: {location_data['formatted_address']}")
     
-    if 'ambulance_info' in locals() and nearest:
-        print(f"Ambulance: {nearest['id']}")
-        print(f"ETA: {nearest['eta_minutes']} minutes")
-        print(f"Distance: {nearest['distance_km']} km")
+    if ambulance_info:
+        print(f"Ambulance: {ambulance_info['id']}")
+        print(f"ETA: {ambulance_info['eta_minutes']} minutes")
+        print(f"Distance: {ambulance_info['distance_km']} km")
     
     print(f"Questions Asked: {question_count}")
     print("=" * 80)
@@ -459,7 +516,7 @@ if __name__ == "__main__":
     os.makedirs('models', exist_ok=True)
     
     print("\n🎯 Starting 108 Emergency Agent (Debug Mode)...")
-    print("This version has voice debugging and text fallback")
+    print("This version has voice debugging, Firebase integration, and text fallback")
     print("\n" + "="*80)
     
     main()

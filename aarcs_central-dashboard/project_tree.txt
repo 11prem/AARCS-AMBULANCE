@@ -1,0 +1,31 @@
+Folder PATH listing for volume Windows
+Volume serial number is 5EA6-816D
+C:.
+¦   index (1).html
+¦   project_tree.txt
+¦   
++---css
+¦       components.css
+¦       dashboard.css
+¦       history.css
+¦       main.css
+¦       
++---js
+    ¦   firebase-config.js
+    ¦   
+    +---components
+    ¦       history-card.js
+    ¦       
+    +---pages
+    ¦       app.js
+    ¦       dashboard.js
+    ¦       history.js
+    ¦       login.js
+    ¦       
+    +---services
+    ¦       firebase-service.js
+    ¦       ui-service.js
+    ¦       
+    +---utils
+            helpers.js
+            

@@ -130,9 +130,6 @@
                                 </div>
                             </div>
                         </div>
-                        
-
-
 
                         <!-- Traffic Police Section -->
                         <div class="dashboard-section">
@@ -147,6 +144,49 @@
                                 <div class="timeline">
                                     <h3><i class="fas fa-clipboard-check"></i> Clearance Status</h3>
                                     <div class="timeline-container" id="clearanceStatus"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- NEW: Call Log Section -->
+                        <div class="dashboard-section call-log-section">
+                            <div class="section-header call-log-header">
+                                <h2><i class="fas fa-phone-alt"></i> Emergency Call Log</h2>
+                                <span class="update-time" id="callLogUpdateTime">--:--:--</span>
+                            </div>
+                            
+                            <div class="section-content">
+                                <div class="call-log-container" id="callLogContainer">
+                                    <div class="empty-state">
+                                        <i class="fas fa-microphone-slash"></i>
+                                        <h3>No Active Call</h3>
+                                        <p>Waiting for emergency call to begin...</p>
+                                    </div>
+                                </div>
+                                <div class="call-status" id="callStatus">
+                                    <span class="status-indicator status-inactive"></span>
+                                    <span id="callStatusText">No active call</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- NEW: Call Summary Section -->
+                        <div class="dashboard-section call-summary-section" id="callSummarySection" style="display: none;">
+                            <div class="section-header call-summary-header">
+                                <h2><i class="fas fa-clipboard-list"></i> Call Summary</h2>
+                                <span class="update-time" id="summaryUpdateTime">--:--:--</span>
+                            </div>
+                            
+                            <div class="section-content">
+                                <div class="summary-content" id="summaryContent"></div>
+                                
+                                <div class="summary-actions">
+                                    <button class="summary-btn view-details-btn" id="viewFullSummaryBtn">
+                                        <i class="fas fa-expand-alt"></i> View Full Details
+                                    </button>
+                                    <button class="summary-btn dispatch-ambulance-btn" id="dispatchFromSummaryBtn">
+                                        <i class="fas fa-ambulance"></i> Dispatch Ambulance
+                                    </button>
                                 </div>
                             </div>
                         </div>

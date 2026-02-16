@@ -5,6 +5,9 @@ const FirebaseService = {
         return window.database || firebase.database();
     },
 
+    // Store message listener reference
+    _messageListener: null,
+
     // Get all history data
     async getHistoryData(filters = {}) {
         try {
@@ -108,6 +111,117 @@ const FirebaseService = {
                     callback({});
                 }
             });
+    },
+
+    // ========== FIXED METHODS FOR CALL LOGS AND SUMMARIES ==========
+
+    // Listen to active call logs
+    listenToCallLogs(callback) {
+        console.log('🔍 Setting up call log listener...');
+        
+        // Listen to all live calls to find the active one
+        const callsRef = this.database.ref('live_calls');
+        
+        return callsRef.on('value', (snapshot) => {
+            console.log('📡 Live calls snapshot received:', snapshot.val());
+            
+            if (snapshot.exists()) {
+                const calls = snapshot.val();
+                
+                // Find the most recent active call
+                let latestActiveCall = null;
+                let latestTimestamp = 0;
+                
+                Object.entries(calls).forEach(([callId, callData]) => {
+                    if (callData.status === 'active' && callData.timestamp > latestTimestamp) {
+                        latestActiveCall = { id: callId, ...callData };
+                        latestTimestamp = callData.timestamp;
+                    }
+                });
+                
+                if (latestActiveCall) {
+                    console.log('✅ Found active call:', latestActiveCall.id);
+                    
+                    // Now listen to messages for this specific call
+                    const messagesRef = this.database.ref(`live_calls/${latestActiveCall.id}/messages`);
+                    
+                    // Remove any existing message listener
+                    if (this._messageListener) {
+                        messagesRef.off('value', this._messageListener);
+                    }
+                    
+                    this._messageListener = messagesRef.on('value', (msgSnapshot) => {
+                        console.log('📨 Messages snapshot for call', latestActiveCall.id, ':', msgSnapshot.val());
+                        
+                        if (msgSnapshot.exists()) {
+                            const messages = [];
+                            msgSnapshot.forEach((child) => {
+                                messages.push({
+                                    id: child.key,
+                                    ...child.val()
+                                });
+                            });
+                            // Sort by timestamp
+                            messages.sort((a, b) => a.timestamp - b.timestamp);
+                            console.log('✅ Sorted messages:', messages);
+                            callback({ messages, callId: latestActiveCall.id, status: 'active' });
+                        } else {
+                            console.log('📭 No messages yet for this call');
+                            callback({ messages: [], callId: latestActiveCall.id, status: 'active' });
+                        }
+                    });
+                } else {
+                    console.log('📭 No active calls found');
+                    callback({ messages: [], callId: null, status: 'inactive' });
+                }
+            } else {
+                console.log('📭 No calls in database');
+                callback({ messages: [], callId: null, status: 'inactive' });
+            }
+        });
+    },
+
+    // Listen to call summaries
+    listenToCallSummaries(callback) {
+        console.log('🔍 Setting up call summary listener...');
+        
+        return this.database.ref('call_summaries')
+            .orderByChild('timestamp')
+            .limitToLast(1)
+            .on('value', (snapshot) => {
+                console.log('📡 Summary snapshot received:', snapshot.val());
+                
+                if (snapshot.exists()) {
+                    let latestSummary = null;
+                    let latestTimestamp = 0;
+                    
+                    snapshot.forEach((child) => {
+                        const summary = child.val();
+                        const summaryTime = summary.timestamp ? new Date(summary.timestamp).getTime() : 0;
+                        if (summaryTime > latestTimestamp) {
+                            latestSummary = summary;
+                            latestTimestamp = summaryTime;
+                        }
+                    });
+                    
+                    console.log('✅ Latest summary:', latestSummary);
+                    callback(latestSummary);
+                } else {
+                    console.log('📭 No summaries found');
+                    callback(null);
+                }
+            });
+    },
+
+    // Stop listening to calls (cleanup)
+    stopListeningToCalls(listener) {
+        if (listener) {
+            this.database.ref('live_calls').off('value', listener);
+        }
+        if (this._messageListener) {
+            this.database.ref().off('value', this._messageListener);
+            this._messageListener = null;
+        }
     }
 };
 

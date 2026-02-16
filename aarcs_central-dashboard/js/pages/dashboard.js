@@ -11,13 +11,31 @@ const DashboardPage = {
     ambulanceUpdateTime: document.getElementById('ambulanceUpdateTime'),
     policeUpdateTime: document.getElementById('policeUpdateTime'),
     
+    // NEW: Call Log elements
+    callLogContainer: document.getElementById('callLogContainer'),
+    callStatus: document.getElementById('callStatus'),
+    callStatusText: document.getElementById('callStatusText'),
+    callLogUpdateTime: document.getElementById('callLogUpdateTime'),
+    callSummarySection: document.getElementById('callSummarySection'),
+    summaryContent: document.getElementById('summaryContent'),
+    summaryUpdateTime: document.getElementById('summaryUpdateTime'),
+    viewFullSummaryBtn: document.getElementById('viewFullSummaryBtn'),
+    dispatchFromSummaryBtn: document.getElementById('dispatchFromSummaryBtn'),
+    
     // Current data
     currentAmbulanceRequest: null,
     currentPoliceAlert: null,
     
+    // NEW: Call log data
+    currentCallId: null,
+    currentCallSummary: null,
+    
     // Listeners
     ambulanceListener: null,
     policeListener: null,
+    // NEW: Call log listeners
+    callLogListener: null,
+    callSummaryListener: null,
     timer: null,
 
     // Initialize
@@ -30,6 +48,9 @@ const DashboardPage = {
         
         this.startRealTimeUpdates();
         this.loadSampleData();
+        
+        // Initialize call log features
+        this.initCallLogFeatures();
     },
 
     // Start real-time updates
@@ -392,6 +413,312 @@ const DashboardPage = {
                 </div>
             </div>
         `;
+    },
+
+    // ========== FIXED METHODS FOR CALL LOGS AND SUMMARIES ==========
+
+    // Initialize call log features
+    initCallLogFeatures() {
+        console.log('📞 Initializing Call Log Features...');
+        
+        // Check if all required elements exist
+        console.log('callLogContainer:', this.callLogContainer);
+        console.log('callStatus:', this.callStatus);
+        console.log('callSummarySection:', this.callSummarySection);
+        
+        if (window.FirebaseService) {
+            console.log('✅ FirebaseService found');
+            
+            // Listen to call logs
+            this.callLogListener = window.FirebaseService.listenToCallLogs((data) => {
+                console.log('🔥 Firebase call log data received:', data);
+                this.updateCallLog(data);
+            });
+            
+            // Listen to call summaries
+            this.callSummaryListener = window.FirebaseService.listenToCallSummaries((summary) => {
+                console.log('🔥 Firebase summary received:', summary);
+                this.updateCallSummary(summary);
+            });
+        } else {
+            console.error('❌ FirebaseService not found!');
+        }
+        
+        // Bind button events
+        if (this.viewFullSummaryBtn) {
+            this.viewFullSummaryBtn.addEventListener('click', () => {
+                this.showFullSummaryModal();
+            });
+        }
+        
+        if (this.dispatchFromSummaryBtn) {
+            this.dispatchFromSummaryBtn.addEventListener('click', () => {
+                this.dispatchAmbulanceFromSummary();
+            });
+        }
+    },
+
+    // Update call log display
+    updateCallLog(data) {
+        console.log('📞 updateCallLog called with data:', data);
+        
+        if (!this.callLogContainer) {
+            console.error('❌ callLogContainer not found!');
+            return;
+        }
+        
+        const { messages, callId, status } = data;
+        console.log('Messages:', messages, 'CallId:', callId, 'Status:', status);
+        
+        this.currentCallId = callId;
+        
+        // Update status indicator
+        if (this.callStatus && this.callStatusText) {
+            const indicator = this.callStatus.querySelector('.status-indicator');
+            if (status === 'active') {
+                indicator.className = 'status-indicator status-active';
+                this.callStatusText.textContent = 'Active call in progress';
+            } else {
+                indicator.className = 'status-indicator status-inactive';
+                this.callStatusText.textContent = 'No active call';
+            }
+        }
+        
+        // Update timestamp
+        if (this.callLogUpdateTime) {
+            const now = new Date();
+            this.callLogUpdateTime.textContent = now.toLocaleTimeString([], { 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit' 
+            });
+        }
+        
+        // Update messages
+        if (messages && messages.length > 0) {
+            this.callLogContainer.innerHTML = '';
+            
+            messages.forEach(msg => {
+                const messageEl = document.createElement('div');
+                messageEl.className = `call-log-message ${msg.speaker}`;
+                
+                const time = msg.time || new Date(msg.timestamp).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+                
+                messageEl.innerHTML = `
+                    <div class="message-header ${msg.speaker}">
+                        <i class="fas ${msg.speaker === 'agent' ? 'fa-robot' : 'fa-user'}"></i>
+                        <span>${msg.speaker === 'agent' ? 'AI Agent' : 'Caller'}</span>
+                        <span class="message-time">${time}</span>
+                    </div>
+                    <div class="message-bubble">${this.escapeHtml(msg.message)}</div>
+                `;
+                
+                this.callLogContainer.appendChild(messageEl);
+            });
+            
+            // Scroll to bottom
+            this.callLogContainer.scrollTop = this.callLogContainer.scrollHeight;
+        } else if (status === 'active') {
+            // Active call but no messages yet
+            this.callLogContainer.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-microphone"></i>
+                    <h3>Call Connected</h3>
+                    <p>Waiting for conversation to begin...</p>
+                </div>
+            `;
+        } else {
+            // No active call
+            this.callLogContainer.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-phone-slash"></i>
+                    <h3>No Active Call</h3>
+                    <p>Waiting for emergency call to begin...</p>
+                </div>
+            `;
+        }
+    },
+
+    // Update call summary display
+    updateCallSummary(summary) {
+        console.log('📋 updateCallSummary called with:', summary);
+        
+        if (!this.callSummarySection || !this.summaryContent) {
+            console.error('❌ Summary elements not found!');
+            return;
+        }
+        
+        if (summary) {
+            this.currentCallSummary = summary;
+            this.callSummarySection.style.display = 'block';
+            
+            // Update timestamp
+            if (this.summaryUpdateTime) {
+                const now = new Date();
+                this.summaryUpdateTime.textContent = now.toLocaleTimeString([], { 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    second: '2-digit' 
+                });
+            }
+            
+            // Build summary HTML
+            const emergencyInfo = summary.emergency_info || {};
+            const ambulanceData = summary.ambulance_data || {};
+            const callSummary = summary.call_summary || {};
+            
+            // Determine priority class
+            const urgency = (emergencyInfo.urgency || callSummary.urgency || 'normal').toLowerCase();
+            let priorityClass = 'priority-medium';
+            if (urgency === 'critical' || urgency === 'urgent') priorityClass = 'priority-critical';
+            else if (urgency === 'high') priorityClass = 'priority-high';
+            else if (urgency === 'low') priorityClass = 'priority-low';
+            
+            let priorityText = urgency.toUpperCase();
+            if (urgency === 'urgent') priorityText = 'URGENT';
+            
+            this.summaryContent.innerHTML = `
+                <div class="summary-grid">
+                    <div class="summary-item">
+                        <div class="summary-item-label">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <span>Emergency Type</span>
+                        </div>
+                        <div class="summary-item-value">
+                            ${emergencyInfo.type || callSummary.emergency_type || 'Unknown'}
+                        </div>
+                    </div>
+                    
+                    <div class="summary-item">
+                        <div class="summary-item-label">
+                            <i class="fas fa-flag"></i>
+                            <span>Priority</span>
+                        </div>
+                        <div class="summary-item-value">
+                            <span class="priority-badge ${priorityClass}">${priorityText}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="summary-item full-width">
+                        <div class="summary-item-label">
+                            <i class="fas fa-map-marker-alt"></i>
+                            <span>Location</span>
+                        </div>
+                        <div class="summary-item-value">
+                            ${emergencyInfo.location || callSummary.location || 'Unknown'}
+                        </div>
+                        ${emergencyInfo.location_details ? `
+                            <div class="summary-location-details">
+                                <div>${emergencyInfo.location_details.address || ''}</div>
+                                <div class="coordinates">
+                                    ${emergencyInfo.location_details.latitude ? 
+                                        `${emergencyInfo.location_details.latitude.toFixed(4)}, ${emergencyInfo.location_details.longitude.toFixed(4)}` : 
+                                        callSummary.location_details?.coordinates || ''}
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="summary-item">
+                        <div class="summary-item-label">
+                            <i class="fas fa-user-injured"></i>
+                            <span>Injuries</span>
+                        </div>
+                        <div class="summary-item-value">
+                            ${callSummary.injuries === true ? 'Yes' : 
+                              callSummary.injuries === false ? 'No' : 
+                              emergencyInfo.injuries ? 'Yes' : 'Unknown'}
+                            ${callSummary.injury_count ? ` (${callSummary.injury_count} persons)` : ''}
+                        </div>
+                    </div>
+                    
+                    <div class="summary-item">
+                        <div class="summary-item-label">
+                            <i class="fas fa-shield-alt"></i>
+                            <span>Currently Safe</span>
+                        </div>
+                        <div class="summary-item-value">
+                            ${callSummary.is_safe === true ? 'Yes' : 
+                              callSummary.is_safe === false ? 'No' : 'Unknown'}
+                        </div>
+                    </div>
+                    
+                    ${ambulanceData.id ? `
+                    <div class="summary-item full-width">
+                        <div class="summary-item-label">
+                            <i class="fas fa-ambulance"></i>
+                            <span>Ambulance Status</span>
+                        </div>
+                        <div class="summary-item-value">
+                            ${ambulanceData.id} - ETA: ${ambulanceData.eta_minutes} minutes
+                            ${ambulanceData.distance_km ? ` (${ambulanceData.distance_km.toFixed(1)} km away)` : ''}
+                        </div>
+                    </div>
+                    ` : ''}
+                </div>
+                
+                ${summary.conversation && summary.conversation.length > 0 ? `
+                <div class="conversation-summary">
+                    <h4><i class="fas fa-comments"></i> Recent Conversation</h4>
+                    <div class="conversation-preview">
+                        ${summary.conversation.slice(-5).map(msg => `
+                            <div class="conversation-line">
+                                <span class="speaker ${msg.speaker}">${msg.speaker === 'ai' ? 'AI' : 'Caller'}</span>
+                                <span class="message">${this.escapeHtml(msg.message)}</span>
+                                <span class="time">${msg.time || ''}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+            `;
+        } else {
+            this.callSummarySection.style.display = 'none';
+            this.currentCallSummary = null;
+        }
+    },
+
+    // Helper: Escape HTML to prevent XSS
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    },
+
+    // Show full summary modal (placeholder)
+    showFullSummaryModal() {
+        if (this.currentCallSummary) {
+            console.log('Full Summary:', this.currentCallSummary);
+            
+            if (window.Helpers) {
+                window.Helpers.showNotification('Full summary view coming soon!', 'info');
+            }
+        }
+    },
+
+    // Dispatch ambulance from summary
+    dispatchAmbulanceFromSummary() {
+        if (this.currentCallSummary) {
+            const summary = this.currentCallSummary;
+            const location = summary.emergency_info?.location || summary.call_summary?.location;
+            
+            if (location) {
+                console.log('Dispatching ambulance to:', location);
+                
+                if (window.Helpers) {
+                    window.Helpers.showNotification(`Ambulance dispatched to ${location}`, 'success');
+                }
+            } else {
+                if (window.Helpers) {
+                    window.Helpers.showNotification('No location available for dispatch', 'error');
+                }
+            }
+        }
     },
 
     // Show dashboard
