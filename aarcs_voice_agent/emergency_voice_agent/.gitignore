@@ -1,0 +1,37 @@
+# ============================================
+# CRITICAL: Never commit these files
+# ============================================
+
+# Firebase Admin Credentials (SECURITY CRITICAL)
+**/config/firebase-service-account.json
+
+# Environment Files with URLs (changes per setup)
+aarcs_ambulance/.env
+aarcs_traffic-police/.env
+
+# ============================================
+# Auto-generated files (can be recreated)
+# ============================================
+
+# Node.js dependencies (run: npm install)
+aarcs_backend/node_modules/
+
+# Flutter/Dart build files (run: flutter build)
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+
+# ============================================
+# IDE/Editor files (personal preferences)
+# ============================================
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# ============================================
+# Large SDK files (should use system Flutter)
+# ============================================
+aarcs_ambulance/Dart/
+**/dart-sdk/
