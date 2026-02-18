@@ -437,7 +437,25 @@ def main():
     call_duration = datetime.now() - call_start_time
     
     # Build comprehensive summary for Firebase
-    call_summary = {
+    call_summary = firebase.generate_summary(
+        call_data=call_data,
+        location_data=location_data,
+        ambulance_info=nearest if 'nearest' in locals() else None,
+        call_db_id=call_db_id,
+        call_start_time=call_start_time,
+        call_duration=call_duration,
+        question_count=question_count
+    )
+
+     # End call and save summary to Firebase
+    firebase.end_call(call_summary)
+    
+    # Send final summary to monitor
+    send_to_monitor('call_summary', call_summary)
+    send_to_monitor('call_ended', {})
+
+    {
+        
         'timestamp': datetime.now().isoformat(),
         'emergency_info': {
             'type': call_data['emergency_type'],

@@ -1,29 +1,66 @@
+# Save this as .gitignore in your project root
+@"
 # ============================================
-# CRITICAL: Never commit these files
+# CRITICAL: Firebase Service Account Keys (NEVER COMMIT)
 # ============================================
-
-# Firebase Admin Credentials (SECURITY CRITICAL)
-**/config/firebase-service-account.json
-
-# Environment Files with URLs (changes per setup)
-aarcs_ambulance/.env
-aarcs_traffic-police/.env
+**/serviceAccountKey.json
+**/serviceAccountKey*.json
+**/*service-account*.json
+**/*credentials*.json
+aarcs_voice_agent/emergency_voice_agent/serviceAccountKey.json
+aarcs_voice_agent/emergency_voice_agent/scripts/serviceAccountKey.json
+**/*.key
+**/*.pem
+**/*.cert
 
 # ============================================
-# Auto-generated files (can be recreated)
+# Environment Variables (NEVER COMMIT)
 # ============================================
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+!.env.example
 
-# Node.js dependencies (run: npm install)
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+aarcs_voice_agent/venv/
+aarcs_voice_agent/emergency_voice_agent/venv/
+
+# ============================================
+# Node.js
+# ============================================
+node_modules/
 aarcs_backend/node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
 
-# Flutter/Dart build files (run: flutter build)
+# ============================================
+# Flutter/Dart
+# ============================================
 **/build/
 **/.dart_tool/
 **/.flutter-plugins
 **/.flutter-plugins-dependencies
+**/Dart/
+**/dart-sdk/
 
 # ============================================
-# IDE/Editor files (personal preferences)
+# IDE/Editor files
 # ============================================
 .idea/
 .vscode/
@@ -31,7 +68,9 @@ aarcs_backend/node_modules/
 .DS_Store
 
 # ============================================
-# Large SDK files (should use system Flutter)
+# OS generated files
 # ============================================
-aarcs_ambulance/Dart/
-**/dart-sdk/
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+"@ | Out-File -FilePath .gitignore -Encoding utf8
