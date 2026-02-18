@@ -30,6 +30,9 @@ const DashboardPage = {
     currentCallId: null,
     currentCallSummary: null,
     
+    // Login timestamp
+    loginTimestamp: null,
+    
     // Listeners
     ambulanceListener: null,
     policeListener: null,
@@ -43,6 +46,9 @@ const DashboardPage = {
         console.log('📊 DashboardPage initializing...');
         if (!this.liveTripPage) return;
         
+        // Store login timestamp
+        this.loginTimestamp = new Date();
+        
         this.liveTripPage.classList.remove('active');
         this.liveTripPage.style.display = 'none';
         
@@ -51,6 +57,34 @@ const DashboardPage = {
         
         // Initialize call log features
         this.initCallLogFeatures();
+        
+        // Set initial timestamps to login time
+        this.setInitialTimestamps();
+    },
+
+    // Set initial timestamps to login time
+    setInitialTimestamps() {
+        const loginTimeStr = this.loginTimestamp.toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit', 
+            second: '2-digit' 
+        });
+        
+        if (this.ambulanceUpdateTime) {
+            this.ambulanceUpdateTime.textContent = loginTimeStr;
+        }
+        
+        if (this.policeUpdateTime) {
+            this.policeUpdateTime.textContent = loginTimeStr;
+        }
+        
+        if (this.callLogUpdateTime) {
+            this.callLogUpdateTime.textContent = loginTimeStr;
+        }
+        
+        if (this.summaryUpdateTime) {
+            this.summaryUpdateTime.textContent = loginTimeStr;
+        }
     },
 
     // Start real-time updates
@@ -70,6 +104,8 @@ const DashboardPage = {
                     this.updateAmbulanceInfo();
                     this.updatePatientInfo();
                     this.updateTimeline();
+                    
+                    // Keep login timestamp - do not update
                 }
             });
             
@@ -86,21 +122,13 @@ const DashboardPage = {
                     
                     this.updatePoliceInfo();
                     this.updateClearanceStatus();
+                    
+                    // Keep login timestamp - do not update
                 }
             });
         }
         
-        this.timer = setInterval(() => {
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString([], { 
-                hour: '2-digit', 
-                minute: '2-digit', 
-                second: '2-digit' 
-            });
-            
-            if (this.ambulanceUpdateTime) this.ambulanceUpdateTime.textContent = timeStr;
-            if (this.policeUpdateTime) this.policeUpdateTime.textContent = timeStr;
-        }, 1000);
+        // Timer removed to prevent continuous updates
     },
 
     // Load sample data for demo
@@ -137,6 +165,8 @@ const DashboardPage = {
             this.updateTimeline();
             this.updatePoliceInfo();
             this.updateClearanceStatus();
+            
+            // Keep login timestamp - do not update
         }
     },
 
@@ -484,15 +514,7 @@ const DashboardPage = {
             }
         }
         
-        // Update timestamp
-        if (this.callLogUpdateTime) {
-            const now = new Date();
-            this.callLogUpdateTime.textContent = now.toLocaleTimeString([], { 
-                hour: '2-digit', 
-                minute: '2-digit', 
-                second: '2-digit' 
-            });
-        }
+        // Keep login timestamp - do not update callLogUpdateTime
         
         // Update messages
         if (messages && messages.length > 0) {
@@ -556,15 +578,7 @@ const DashboardPage = {
             this.currentCallSummary = summary;
             this.callSummarySection.style.display = 'block';
             
-            // Update timestamp
-            if (this.summaryUpdateTime) {
-                const now = new Date();
-                this.summaryUpdateTime.textContent = now.toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit', 
-                    second: '2-digit' 
-                });
-            }
+            // Keep login timestamp - do not update summaryUpdateTime
             
             // Build summary HTML
             const emergencyInfo = summary.emergency_info || {};
