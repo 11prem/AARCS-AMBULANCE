@@ -116,73 +116,110 @@ const FirebaseService = {
     // ========== FIXED METHODS FOR CALL LOGS AND SUMMARIES ==========
 
     // Listen to active call logs
+    
+    // Listen to active call logs - FIXED VERSION
     listenToCallLogs(callback) {
         console.log('🔍 Setting up call log listener...');
+    
+    // Listen to all live calls
+    const callsRef = this.database.ref('live_calls');
+    
+    return callsRef.on('value', (snapshot) => {
+        console.log('📡 Live calls snapshot received:', snapshot.val());
         
-        // Listen to all live calls to find the active one
-        const callsRef = this.database.ref('live_calls');
-        
-        return callsRef.on('value', (snapshot) => {
-            console.log('📡 Live calls snapshot received:', snapshot.val());
+        if (snapshot.exists()) {
+            const calls = snapshot.val();
             
-            if (snapshot.exists()) {
-                const calls = snapshot.val();
+            // Find the most recent active call
+            let activeCallId = null;
+            let activeCallData = null;
+            let latestTimestamp = 0;
+            
+            // Loop through all calls to find active one
+            Object.keys(calls).forEach(callId => {
+                const call = calls[callId];
+                console.log(`Checking call ${callId}:`, call);
                 
-                // Find the most recent active call
-                let latestActiveCall = null;
-                let latestTimestamp = 0;
+                if (call.status === 'active' && call.timestamp > latestTimestamp) {
+                    activeCallId = callId;
+                    activeCallData = call;
+                    latestTimestamp = call.timestamp;
+                }
+            });
+            
+            if (activeCallId) {
+                console.log(`✅ Found active call: ${activeCallId}`);
                 
-                Object.entries(calls).forEach(([callId, callData]) => {
-                    if (callData.status === 'active' && callData.timestamp > latestTimestamp) {
-                        latestActiveCall = { id: callId, ...callData };
-                        latestTimestamp = callData.timestamp;
+                // Now listen to messages for this specific call
+                const messagesRef = this.database.ref(`live_calls/${activeCallId}/messages`);
+                
+                // Remove any existing listener
+                if (this._messageListener) {
+                    messagesRef.off('value', this._messageListener);
+                }
+                
+                // Set up new message listener
+                this._messageListener = messagesRef.on('value', (msgSnapshot) => {
+                    console.log(`📨 Messages for call ${activeCallId}:`, msgSnapshot.val());
+                    
+                    if (msgSnapshot.exists()) {
+                        const messages = [];
+                        msgSnapshot.forEach((child) => {
+                            const msg = child.val();
+                            console.log('Raw message from Firebase:', msg); // Debug log
+                            
+                            messages.push({
+                                id: child.key,
+                                speaker: msg.speaker || 'unknown',
+                                message: msg.message || '',
+                                timestamp: msg.timestamp || Date.now(),
+                                time: msg.time || new Date(msg.timestamp).toLocaleTimeString()
+                            });
+                        });
+                        
+                        // Sort by timestamp
+                        messages.sort((a, b) => a.timestamp - b.timestamp);
+                        
+                        console.log('✅ Sending messages to dashboard:', messages);
+                        
+                        // Send to dashboard
+                        callback({
+                            messages: messages,
+                            callId: activeCallId,
+                            status: 'active'
+                        });
+                    } else {
+                        console.log('📭 No messages yet for this call');
+                        callback({
+                            messages: [],
+                            callId: activeCallId,
+                            status: 'active'
+                        });
                     }
                 });
-                
-                if (latestActiveCall) {
-                    console.log('✅ Found active call:', latestActiveCall.id);
-                    
-                    // Now listen to messages for this specific call
-                    const messagesRef = this.database.ref(`live_calls/${latestActiveCall.id}/messages`);
-                    
-                    // Remove any existing message listener
-                    if (this._messageListener) {
-                        messagesRef.off('value', this._messageListener);
-                    }
-                    
-                    this._messageListener = messagesRef.on('value', (msgSnapshot) => {
-                        console.log('📨 Messages snapshot for call', latestActiveCall.id, ':', msgSnapshot.val());
-                        
-                        if (msgSnapshot.exists()) {
-                            const messages = [];
-                            msgSnapshot.forEach((child) => {
-                                messages.push({
-                                    id: child.key,
-                                    ...child.val()
-                                });
-                            });
-                            // Sort by timestamp
-                            messages.sort((a, b) => a.timestamp - b.timestamp);
-                            console.log('✅ Sorted messages:', messages);
-                            callback({ messages, callId: latestActiveCall.id, status: 'active' });
-                        } else {
-                            console.log('📭 No messages yet for this call');
-                            callback({ messages: [], callId: latestActiveCall.id, status: 'active' });
-                        }
-                    });
-                } else {
-                    console.log('📭 No active calls found');
-                    callback({ messages: [], callId: null, status: 'inactive' });
-                }
             } else {
-                console.log('📭 No calls in database');
-                callback({ messages: [], callId: null, status: 'inactive' });
+                console.log('📭 No active calls found');
+                callback({
+                    messages: [],
+                    callId: null,
+                    status: 'inactive'
+                });
             }
-        });
-    },
+        } else {
+            console.log('📭 No calls in database');
+            callback({
+                messages: [],
+                callId: null,
+                status: 'inactive'
+            });
+        }
+    });
+},
+
+
 
     // Listen to call summaries
-    listenToCallSummaries(callback) {
+  listenToCallSummaries(callback) {
         console.log('🔍 Setting up call summary listener...');
         
         return this.database.ref('call_summaries')

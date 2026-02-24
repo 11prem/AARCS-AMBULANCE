@@ -489,81 +489,93 @@ const DashboardPage = {
     },
 
     // Update call log display
-    updateCallLog(data) {
-        console.log('📞 updateCallLog called with data:', data);
-        
-        if (!this.callLogContainer) {
-            console.error('❌ callLogContainer not found!');
-            return;
+    
+    // Update call log display
+updateCallLog(data) {
+    console.log('📞 updateCallLog called with data:', data);
+    
+    if (!this.callLogContainer) {
+        console.error('❌ callLogContainer not found!');
+        return;
+    }
+    
+    const { messages, callId, status } = data;
+    console.log('Processing messages:', messages);
+    
+    this.currentCallId = callId;
+    
+    // Update status indicator
+    if (this.callStatus && this.callStatusText) {
+        const indicator = this.callStatus.querySelector('.status-indicator');
+        if (status === 'active') {
+            indicator.className = 'status-indicator status-active';
+            this.callStatusText.textContent = 'Active call in progress';
+        } else {
+            indicator.className = 'status-indicator status-inactive';
+            this.callStatusText.textContent = 'No active call';
         }
+    }
+    
+    // Update timestamp
+    if (this.callLogUpdateTime) {
+        const now = new Date();
+        this.callLogUpdateTime.textContent = now.toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit', 
+            second: '2-digit' 
+        });
+    }
+    
+    // Update messages
+    if (messages && messages.length > 0) {
+        console.log(`Displaying ${messages.length} messages`);
+        this.callLogContainer.innerHTML = '';
         
-        const { messages, callId, status } = data;
-        console.log('Messages:', messages, 'CallId:', callId, 'Status:', status);
-        
-        this.currentCallId = callId;
-        
-        // Update status indicator
-        if (this.callStatus && this.callStatusText) {
-            const indicator = this.callStatus.querySelector('.status-indicator');
-            if (status === 'active') {
-                indicator.className = 'status-indicator status-active';
-                this.callStatusText.textContent = 'Active call in progress';
-            } else {
-                indicator.className = 'status-indicator status-inactive';
-                this.callStatusText.textContent = 'No active call';
-            }
-        }
-        
-        // Keep login timestamp - do not update callLogUpdateTime
-        
-        // Update messages
-        if (messages && messages.length > 0) {
-            this.callLogContainer.innerHTML = '';
+        messages.forEach(msg => {
+            console.log('Creating message element for:', msg);
             
-            messages.forEach(msg => {
-                const messageEl = document.createElement('div');
-                messageEl.className = `call-log-message ${msg.speaker}`;
-                
-                const time = msg.time || new Date(msg.timestamp).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit'
-                });
-                
-                messageEl.innerHTML = `
-                    <div class="message-header ${msg.speaker}">
-                        <i class="fas ${msg.speaker === 'agent' ? 'fa-robot' : 'fa-user'}"></i>
-                        <span>${msg.speaker === 'agent' ? 'AI Agent' : 'Caller'}</span>
-                        <span class="message-time">${time}</span>
-                    </div>
-                    <div class="message-bubble">${this.escapeHtml(msg.message)}</div>
-                `;
-                
-                this.callLogContainer.appendChild(messageEl);
+            const messageEl = document.createElement('div');
+            messageEl.className = `call-log-message ${msg.speaker}`;
+            
+            const time = msg.time || new Date(msg.timestamp).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
             });
             
-            // Scroll to bottom
-            this.callLogContainer.scrollTop = this.callLogContainer.scrollHeight;
-        } else if (status === 'active') {
-            // Active call but no messages yet
-            this.callLogContainer.innerHTML = `
-                <div class="empty-state">
-                    <i class="fas fa-microphone"></i>
-                    <h3>Call Connected</h3>
-                    <p>Waiting for conversation to begin...</p>
+            messageEl.innerHTML = `
+                <div class="message-header ${msg.speaker}">
+                    <i class="fas ${msg.speaker === 'agent' ? 'fa-robot' : 'fa-user'}"></i>
+                    <span>${msg.speaker === 'agent' ? 'AI Agent' : 'Caller'}</span>
+                    <span class="message-time">${time}</span>
                 </div>
+                <div class="message-bubble">${this.escapeHtml(msg.message)}</div>
             `;
-        } else {
-            // No active call
-            this.callLogContainer.innerHTML = `
-                <div class="empty-state">
-                    <i class="fas fa-phone-slash"></i>
-                    <h3>No Active Call</h3>
-                    <p>Waiting for emergency call to begin...</p>
-                </div>
-            `;
-        }
-    },
+            
+            this.callLogContainer.appendChild(messageEl);
+        });
+        
+        // Scroll to bottom
+        this.callLogContainer.scrollTop = this.callLogContainer.scrollHeight;
+    } else if (status === 'active') {
+        this.callLogContainer.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-microphone"></i>
+                <h3>Call Connected</h3>
+                <p>Waiting for conversation to begin...</p>
+            </div>
+        `;
+    } else {
+        this.callLogContainer.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-phone-slash"></i>
+                <h3>No Active Call</h3>
+                <p>Waiting for emergency call to begin...</p>
+            </div>
+        `;
+    }
+},
+
 
     // Update call summary display
     updateCallSummary(summary) {
