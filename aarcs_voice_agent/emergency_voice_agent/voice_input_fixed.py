@@ -52,8 +52,8 @@ class ReliableVoiceInput:
                 self.recognizer.dynamic_energy_threshold = True
                 self.recognizer.energy_threshold = self.energy_threshold
                 
-                print("   Adjusting for ambient noise (3 seconds)...")
-                self.recognizer.adjust_for_ambient_noise(source, duration=3)
+                #print("   Adjusting for ambient noise (3 seconds)...")
+                #self.recognizer.adjust_for_ambient_noise(source, duration=3)
                 print(f"   Energy threshold: {self.recognizer.energy_threshold}")
                 print("   Speak now...")
                 
