@@ -102,7 +102,7 @@ class FirebaseAmbulanceService {
         'currentLocation': currentLocation,
         'requestId': requestId,
         'timestamp': ServerValue.timestamp,
-        'status': 'active', // active, acknowledged, completed
+        'status': 'active',
         'acknowledged': false,
         'acknowledgedBy': null,
         'acknowledgedAt': null,
@@ -112,7 +112,6 @@ class FirebaseAmbulanceService {
 
       print('✅ Traffic clearance alert sent to Firebase: $alertId');
 
-      // Also update the emergency request
       if (requestId != null) {
         await _database.child('emergency_requests').child(requestId).update({
           'trafficClearanceRequested': true,
@@ -233,11 +232,13 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   String _eta = "--";
   String _distance = "--";
   double _currentSpeed = 0.0;
+  // ignore: unused_field
   bool _isLocationActive = false;
   bool _isTrafficClearing = false;
   bool _isLoading = true;
   String? _errorMessage;
   BitmapDescriptor? _ambulanceIcon;
+  // ignore: unused_field
   double _currentZoom = 18.5;
 
   bool _isNavigating = false;
@@ -245,6 +246,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   int _currentStepIndex = 0;
   String _currentInstruction = "";
   String _nextInstruction = "";
+  // ignore: unused_field
   double _distanceToNextTurn = 0.0;
   double _currentBearing = 0.0;
 
@@ -255,7 +257,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
   Timer? _instructionDismissTimer;
   bool _showInstructionCard = true;
 
-  // ✅ NEW: Timer for checking police acknowledgment
   Timer? _acknowledgmentCheckTimer;
   bool _isWaitingForPolice = false;
   String? _lastAlertId;
@@ -277,7 +278,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     _mapController?.dispose();
     _routeUpdateTimer?.cancel();
     _instructionDismissTimer?.cancel();
-    _acknowledgmentCheckTimer?.cancel(); // ✅ NEW
+    _acknowledgmentCheckTimer?.cancel();
     super.dispose();
   }
 
@@ -323,36 +324,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 100));
   }
 
-  void _onStartNavigation() async {
-    setState(() {
-      _hasStartedNavigation = true;
-    });
-
-    if (_currentPosition == null || widget.destinationLat == null || widget.destinationLng == null) {
-      return;
-    }
-
-    final requestId = await FirebaseAmbulanceService.sendRouteRequest(
-      ambulanceId: widget.ambulanceId,
-      destinationName: widget.destination,
-      currentLat: _currentPosition!.latitude,
-      currentLng: _currentPosition!.longitude,
-      destLat: widget.destinationLat!,
-      destLng: widget.destinationLng!,
-      eta: _eta,
-      distance: _distance,
-      priority: widget.priority,
-      apiKey: _apiKey,
-      justification: widget.justification,
-    );
-
-    if (requestId != null) {
-      _activeRequestId = requestId;
-      _startLocationTracking();
-      _startNavigationMode();
-    }
-  }
-
   Future<void> _determinePosition() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -395,20 +366,101 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
+  void _onStartNavigation() async {
+    setState(() {
+      _hasStartedNavigation = true;
+    });
+
+    if (_currentPosition == null || widget.destinationLat == null || widget.destinationLng == null) {
+      return;
+    }
+
+    final requestId = await FirebaseAmbulanceService.sendRouteRequest(
+      ambulanceId: widget.ambulanceId,
+      destinationName: widget.destination,
+      currentLat: _currentPosition!.latitude,
+      currentLng: _currentPosition!.longitude,
+      destLat: widget.destinationLat!,
+      destLng: widget.destinationLng!,
+      eta: _eta,
+      distance: _distance,
+      priority: widget.priority,
+      apiKey: _apiKey,
+      justification: widget.justification,
+    );
+
+    if (requestId != null) {
+      _activeRequestId = requestId;
+      _startLocationTracking();
+      _startNavigationMode();
+    }
+
+    if (_activeRequestId == null && widget.ambulanceId != null) {
+      try {
+        final snapshot = await FirebaseDatabase.instanceFor(
+          app: Firebase.app(),
+          databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+        ).ref()
+            .child('emergency_requests')
+            .orderByChild('ambulanceId')
+            .equalTo(widget.ambulanceId)
+            .limitToLast(1)
+            .once();
+
+        if (snapshot.snapshot.exists) {
+          final requests = snapshot.snapshot.value as Map;
+          final existingRequestId = requests.keys.first;
+          final existingData = requests[existingRequestId] as Map;
+
+          if (existingData['status'] == 'pending') {
+            await FirebaseDatabase.instanceFor(
+              app: Firebase.app(),
+              databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+            ).ref()
+                .child('emergency_requests')
+                .child(existingRequestId)
+                .update({
+              'status': 'accepted',
+              'accepted_at': ServerValue.timestamp,
+              'eta': _eta,
+              'distance': _distance,
+            });
+
+            _activeRequestId = existingRequestId;
+            print('✅ Updated existing request: $existingRequestId');
+          }
+        }
+      } catch (e) {
+        print('❌ Error updating existing request: $e');
+      }
+    }
+  }
+
   Future<void> _getDirectionsAndRoute() async {
     if (_currentPosition == null || widget.destinationLat == null || widget.destinationLng == null) {
+      print('❌ Missing position or destination for directions');
       return;
     }
 
     final url = 'https://maps.googleapis.com/maps/api/directions/json?origin=${_currentPosition!.latitude},${_currentPosition!.longitude}&destination=${widget.destinationLat},${widget.destinationLng}&mode=driving&key=$_apiKey';
 
+    print('📍 Directions URL: $url');
+
     try {
       final response = await http.get(Uri.parse(url));
+      print('📡 Directions API status code: ${response.statusCode}');
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        print('📍 Directions API response status: ${data['status']}');
+
         if (data['status'] == 'OK' && data['routes'].isNotEmpty) {
           final route = data['routes'][0];
           final leg = route['legs'][0];
+
+          print('✅ Route found!');
+          print('   Duration: ${leg['duration']['text']}');
+          print('   Distance: ${leg['distance']['text']}');
 
           setState(() {
             _eta = leg['duration']['text'];
@@ -418,6 +470,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
           final encodedPolyline = route['overview_polyline']['points'];
           _routePoints = _decodePolyline(encodedPolyline);
+          print('📊 Route points decoded: ${_routePoints.length} points');
 
           _updatePolylines();
           _updateMarkers();
@@ -429,10 +482,26 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
                 _nextInstruction = _cleanHtmlTags(_routeSteps[1]['html_instructions']);
               }
             });
+            print('🗺️ First instruction: $_currentInstruction');
+          }
+        } else {
+          print('❌ Directions API error: ${data['status']}');
+          if (data['status'] == 'REQUEST_DENIED') {
+            print('   This usually means the API key is invalid or restricted');
+            print('   Check that:');
+            print('   1. API key is correct in .env file');
+            print('   2. Directions API is enabled in Google Cloud Console');
+            print('   3. API key has no restrictions or allows your app');
+          } else if (data['status'] == 'ZERO_RESULTS') {
+            print('   No route found between these points');
           }
         }
+      } else {
+        print('❌ Directions API HTTP error: ${response.statusCode}');
+        print('   Response body: ${response.body}');
       }
     } catch (e) {
+      print('❌ Exception fetching directions: $e');
       debugPrint('Error fetching directions: $e');
     }
   }
@@ -552,12 +621,12 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
           title: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.check_circle, color: Colors.green, size: 28), // Reduced size
+              Icon(Icons.check_circle, color: Colors.green, size: 28),
               SizedBox(width: 8),
-              Flexible( // Use Flexible
+              Flexible(
                 child: Text(
                   'Arrived at Destination',
-                  style: TextStyle(fontSize: 16), // Reduced font size
+                  style: TextStyle(fontSize: 16),
                 ),
               ),
             ],
@@ -584,7 +653,7 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
               ),
               child: const Text(
                 'COMPLETE TRIP',
-                style: TextStyle(fontSize: 14), // Reduced font size
+                style: TextStyle(fontSize: 14),
               ),
             ),
           ],
@@ -953,7 +1022,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     });
   }
 
-  // ✅ NEW: Check if police acknowledged the traffic clearance
   Future<void> _checkPoliceAcknowledgment(String alertId) async {
     try {
       final alertSnapshot = await FirebaseDatabase.instanceFor(
@@ -970,7 +1038,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         final isAcknowledged = alertData['acknowledged'] == true;
 
         if (isAcknowledged && mounted) {
-          // Stop checking
           _acknowledgmentCheckTimer?.cancel();
 
           setState(() {
@@ -998,9 +1065,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     }
   }
 
-  // ✅ UPDATED: Clear Traffic with Database + Acknowledgment Check
-  // In route_navigation.dart, update the _onClearTraffic method:
-
   Future<void> _onClearTraffic() async {
     if (!_hasStartedNavigation) return;
 
@@ -1010,7 +1074,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
     });
 
     try {
-      // Send traffic clearance alert to Firebase
       await FirebaseAmbulanceService.sendTrafficClearanceAlert(
         ambulanceId: widget.ambulanceId,
         destination: widget.destination,
@@ -1026,8 +1089,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
 
       print('✅ Traffic clearance alert sent to Firebase');
 
-      // Store the last alert ID for acknowledgment checking
-      // We need to get the latest alert ID from Firebase
       final latestAlertSnapshot = await FirebaseDatabase.instanceFor(
         app: Firebase.app(),
         databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
@@ -1043,7 +1104,6 @@ class _RouteNavigationScreenState extends State<RouteNavigationScreen> {
         final alerts = latestAlertSnapshot.snapshot.value as Map;
         _lastAlertId = alerts.keys.first;
 
-        // Start checking for police acknowledgment every 5 seconds
         _acknowledgmentCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
           if (_lastAlertId != null) {
             await _checkPoliceAcknowledgment(_lastAlertId!);

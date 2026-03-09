@@ -81,25 +81,22 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
 
       await _extractCoordinates();
 
-      _ambulanceLocation ??= const LatLng(13.0827, 80.2707);
-      _destinationLocation ??= const LatLng(13.0900, 80.2800);
+      if (_ambulanceLocation == null || _destinationLocation == null) {
+        print('⚠️ Missing coordinates, using defaults');
+        _ambulanceLocation ??= const LatLng(13.0827, 80.2707);
+        _destinationLocation ??= const LatLng(13.0900, 80.2800);
+      }
 
-      print('📍 Ambulance location: $_ambulanceLocation');
-      print('📍 Destination location: $_destinationLocation');
-
-      // ✅ Icon is already loaded, so this will work immediately
       _updateMarkers();
-
       await _getDirectionsRoute();
       _listenToAmbulanceLocation();
 
       if (mounted) {
         setState(() => _isLoading = false);
-        print('✅ Map initialization complete with ambulance icon');
       }
     } catch (e, stackTrace) {
       print('❌ Error initializing map: $e');
-      print('Stack trace: $stackTrace');
+      print(stackTrace);
       _ambulanceLocation = const LatLng(13.0827, 80.2707);
       _destinationLocation = const LatLng(13.0900, 80.2800);
       _updateMarkers();
@@ -108,7 +105,6 @@ class _EmergencyResponseScreenState extends State<EmergencyResponseScreen> {
       }
     }
   }
-
 
   Future<void> _extractCoordinates() async {
     try {

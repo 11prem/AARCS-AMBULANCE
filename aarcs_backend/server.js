@@ -2,13 +2,33 @@ const express = require('express');
 const admin = require('firebase-admin');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const path = require('path');
+require('dotenv').config(); // Add this to load .env file
 
 // Initialize Firebase Admin SDK
-const serviceAccount = require('/etc/secrets/firebase-service-account.json');
+let serviceAccount;
+try {
+  // Try to load from environment variable first
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    console.log(`📁 Loading service account from: ${process.env.GOOGLE_APPLICATION_CREDENTIALS}`);
+    serviceAccount = require(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+  } else {
+    // Try local config folder as fallback
+    console.log('📁 No GOOGLE_APPLICATION_CREDENTIALS found, trying local config...');
+    serviceAccount = require('./config/firebase-service-account.json');
+  }
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: process.env.FIREBASE_DATABASE_URL || 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app'
+  });
+
+  console.log('✅ Firebase Admin initialized successfully');
+} catch (error) {
+  console.error('❌ Failed to initialize Firebase:', error.message);
+  console.error('   Please check your service account key path');
+  process.exit(1);
+}
 
 const app = express();
 app.use(cors());
@@ -16,14 +36,14 @@ app.use(bodyParser.json());
 
 // Ambulance credentials
 const ambulanceCredentials = {
-  'AMB001': 'emergency123',
+  'AMB-001': 'admin',  // Updated to match your app's login
   'AMB002': 'emergency234',
   'AMB003': 'emergency456'
 };
 
 // Traffic Police credentials
 const trafficPoliceCredentials = {
-  'POL001': 'traffic123',
+  'TP-2024-156': 'admin',  // Updated to match your app's login
   'POL002': 'traffic234',
   'POL003': 'traffic345'
 };

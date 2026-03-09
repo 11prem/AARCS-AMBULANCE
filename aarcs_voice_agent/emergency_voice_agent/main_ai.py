@@ -449,7 +449,35 @@ def main():
 
      # End call and save summary to Firebase
     firebase.end_call(call_summary)
+
     
+    # ========== CREATE EMERGENCY REQUEST ==========
+    print("\n" + "=" * 80)
+    print("STEP 5: CREATE EMERGENCY REQUEST")
+    print("=" * 80)
+
+    # Create emergency request in Firebase if we have valid location
+    if location_data and location_data.get('latitude') and location_data.get('longitude'):
+        request_id = firebase.create_emergency_request(
+            call_summary=call_summary,
+            location=location_data,
+            emergency_type=call_data.get('emergency_type', 'unknown'),
+            description=call_data.get('description', ''),
+            urgency=call_data.get('urgency_level', 'normal')
+        )
+        if request_id:
+            print(f"✅ Emergency request created: {request_id}")
+            # Store in summary for dashboard to use
+            call_summary['request_id'] = request_id
+        else:
+            print("⚠️ Failed to create emergency request")
+    else:
+        print("⚠️ No valid location – emergency request not created")
+
+    print("   Location data available:", location_data is not None)
+    if location_data:
+        print(f"   Lat/Lng: {location_data.get('latitude')}, {location_data.get('longitude')}")
+
     # Send final summary to monitor
     send_to_monitor('call_summary', call_summary)
     send_to_monitor('call_ended', {})

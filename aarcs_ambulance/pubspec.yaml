@@ -1,4 +1,4 @@
-name: aacrs_app
+name: aarcs_app
 description: "AARCS Emergency Ambulance System"
 publish_to: 'none'
 
@@ -15,6 +15,7 @@ dependencies:
   firebase_core: ^3.6.0
   firebase_auth: ^5.3.1
   firebase_database: ^11.1.4
+  flutter_local_notifications: ^14.1.2
   # Location & Maps
   geolocator: ^10.1.1
   google_maps_flutter: ^2.9.0

@@ -73,14 +73,24 @@ const HistoryPage = {
                 historyData = this.getSampleData();
                 const filtered = historyData.filter(item => {
                     let include = true;
-                    if (this.filters.status !== 'all' && item.status !== this.filters.status) include = false;
+                    if (this.filters.status !== 'all') {
+                        if (item.type === 'police_action') {
+                            if (this.filters.status === 'completed' && item.status !== 'acknowledged') include = false;
+                        } else {
+                            if (item.status !== this.filters.status) include = false;
+                        }
+                    }
                     if (this.filters.priority !== 'all' && item.priority !== parseInt(this.filters.priority)) include = false;
                     if (this.filters.search) {
                         const searchLower = this.filters.search.toLowerCase();
-                        if (!item.ambulanceId.toLowerCase().includes(searchLower) && 
-                            !item.destination.toLowerCase().includes(searchLower)) {
-                            include = false;
-                        }
+                        const searchFields = [
+                            item.ambulanceId,
+                            item.destination,
+                            item.acknowledgedBy,
+                            item.description
+                        ].filter(Boolean).map(f => f.toLowerCase());
+                        
+                        if (!searchFields.some(field => field.includes(searchLower))) include = false;
                     }
                     return include;
                 });
@@ -108,8 +118,10 @@ const HistoryPage = {
         const oneDay = 24 * 60 * 60 * 1000;
         
         return [
+            // Ambulance trips
             {
                 requestId: 'REQ-001',
+                type: 'ambulance_trip',
                 ambulanceId: 'AMB-001',
                 currentLocation: 'Near City Mall',
                 destination: 'City General Hospital',
@@ -122,10 +134,12 @@ const HistoryPage = {
                 priority: 1,
                 priorityLabel: 'HIGH',
                 description: 'Car accident with chest pain',
-                trafficClearanceRequested: true
+                trafficClearanceRequested: true,
+                icon: 'fa-ambulance'
             },
             {
                 requestId: 'REQ-002',
+                type: 'ambulance_trip',
                 ambulanceId: 'AMB-003',
                 currentLocation: 'Near Central Station',
                 destination: 'Central Trauma Center',
@@ -138,10 +152,12 @@ const HistoryPage = {
                 priority: 0,
                 priorityLabel: 'CRITICAL',
                 description: 'Heart attack, patient unconscious',
-                trafficClearanceRequested: true
+                trafficClearanceRequested: true,
+                icon: 'fa-ambulance'
             },
             {
                 requestId: 'REQ-003',
+                type: 'ambulance_trip',
                 ambulanceId: 'AMB-005',
                 currentLocation: 'Near North Bridge',
                 destination: 'Northside Medical Center',
@@ -154,7 +170,45 @@ const HistoryPage = {
                 priority: 2,
                 priorityLabel: 'MEDIUM',
                 description: 'Fractured leg from fall',
-                trafficClearanceRequested: false
+                trafficClearanceRequested: false,
+                icon: 'fa-ambulance'
+            },
+            // Police actions
+            {
+                alertId: 'ALT-001',
+                type: 'police_action',
+                ambulanceId: 'AMB-001',
+                destination: 'City General Hospital',
+                status: 'acknowledged',
+                timestamp: now - 2 * oneDay + 5 * 60000,
+                acknowledgedAt: now - 2 * oneDay + 7 * 60000,
+                acknowledgedBy: 'TP-2024-156',
+                eta: '15 min',
+                distance: '4.2 km',
+                priority: 1,
+                priorityLabel: 'HIGH',
+                currentLocation: 'Highway Junction',
+                requestId: 'REQ-001',
+                description: 'Traffic clearance provided for ambulance AMB-001',
+                icon: 'fa-traffic-light'
+            },
+            {
+                alertId: 'ALT-002',
+                type: 'police_action',
+                ambulanceId: 'AMB-003',
+                destination: 'Central Trauma Center',
+                status: 'acknowledged',
+                timestamp: now - 3 * oneDay + 6 * 60000,
+                acknowledgedAt: now - 3 * oneDay + 8 * 60000,
+                acknowledgedBy: 'TP-2024-189',
+                eta: '18 min',
+                distance: '5.7 km',
+                priority: 0,
+                priorityLabel: 'CRITICAL',
+                currentLocation: 'Central Station',
+                requestId: 'REQ-002',
+                description: 'Traffic clearance provided for ambulance AMB-003',
+                icon: 'fa-traffic-light'
             }
         ];
     },
@@ -189,10 +243,12 @@ const HistoryPage = {
         if (!this.historyStats) return;
         
         const totalTrips = historyData.length;
-        const completedTrips = historyData.filter(t => t.status === 'completed').length;
+        const completedTrips = historyData.filter(t => t.status === 'completed' || t.status === 'acknowledged').length;
         const criticalTrips = historyData.filter(t => t.priority === 0).length;
+        const policeActions = historyData.filter(t => t.type === 'police_action').length;
         
         const totalDistance = historyData
+            .filter(t => t.type !== 'police_action') // Only count ambulance trips for distance
             .map(t => {
                 const distance = t.distance?.toString() || '0';
                 const num = parseFloat(distance.replace(/[^0-9.]/g, ''));
@@ -233,6 +289,17 @@ const HistoryPage = {
                     <h4>Critical Cases</h4>
                     <div>
                         <span class="stat-number">${criticalTrips}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon" style="background: #e0f2fe; color: #0284c7;">
+                    <i class="fas fa-traffic-light"></i>
+                </div>
+                <div class="stat-info">
+                    <h4>Police Actions</h4>
+                    <div>
+                        <span class="stat-number">${policeActions}</span>
                     </div>
                 </div>
             </div>

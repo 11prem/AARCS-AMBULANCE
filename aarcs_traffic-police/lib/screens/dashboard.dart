@@ -1,88 +1,20 @@
-// lib/screens/dashboard.dart - TRAFFIC POLICE DASHBOARD WITH LOCAL NOTIFICATIONS
+// lib/screens/dashboard.dart - TRAFFIC POLICE DASHBOARD WITH PUSH NOTIFICATIONS ONLY
 
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'emergency_response_screen.dart';
 import 'history_screen.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../models/priority_model.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-
-// Local Notification Service - WORKING VERSION FOR 14.1.5
-class LocalNotificationService {
-  static final FlutterLocalNotificationsPlugin _notificationsPlugin =
-  FlutterLocalNotificationsPlugin();
-
-  static Future<void> initialize() async {
-    const AndroidInitializationSettings initializationSettingsAndroid =
-    AndroidInitializationSettings('@mipmap/ic_launcher');
-
-    const DarwinInitializationSettings initializationSettingsIOS =
-    DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-    );
-
-    const InitializationSettings initializationSettings =
-    InitializationSettings(
-      android: initializationSettingsAndroid,
-      iOS: initializationSettingsIOS,
-    );
-
-    await _notificationsPlugin.initialize(
-      initializationSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        print('Notification clicked: ${response.payload}');
-        // DON'T navigate to any screen - just open the app
-        // The dashboard will already show the request
-      },
-    );
-  }
-
-  static Future<void> showTrafficAlert(
-      String ambulanceId,
-      String destination,
-      String alertId,
-      ) async {
-    final AndroidNotificationDetails androidPlatformChannelSpecifics =
-    AndroidNotificationDetails(
-      'traffic_channel',
-      'Traffic Alerts',
-      channelDescription: 'Traffic clearance alerts',
-      importance: Importance.max,
-      priority: Priority.high,
-      ticker: 'Ambulance Alert',
-    );
-
-    const DarwinNotificationDetails iosPlatformChannelSpecifics =
-    DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    final NotificationDetails platformChannelSpecifics = NotificationDetails(
-      android: androidPlatformChannelSpecifics,
-      iOS: iosPlatformChannelSpecifics,
-    );
-
-    await _notificationsPlugin.show(
-      0,
-      '🚨 TRAFFIC CLEARANCE REQUEST',
-      'Ambulance $ambulanceId needs immediate clearance to $destination',
-      platformChannelSpecifics,
-      payload: alertId,
-    );
-  }
-}
+import '../main.dart' show flutterLocalNotificationsPlugin, navigatorKey;
 
 // Firebase Police Service
 class FirebasePoliceService {
@@ -116,6 +48,32 @@ class FirebasePoliceService {
       'acknowledgedAt': ServerValue.timestamp,
       'status': 'acknowledged',
     });
+
+    // Also update the associated emergency request if needed
+    try {
+      final alertSnapshot = await _database
+          .child('traffic_clearance_alerts')
+          .child(alertId)
+          .once();
+
+      if (alertSnapshot.snapshot.exists) {
+        final alertData = alertSnapshot.snapshot.value as Map;
+        final requestId = alertData['requestId'];
+
+        if (requestId != null) {
+          await _database
+              .child('emergency_requests')
+              .child(requestId)
+              .update({
+            'trafficClearanceAcknowledged': true,
+            'trafficClearanceAcknowledgedBy': policeId,
+            'trafficClearanceAcknowledgedAt': ServerValue.timestamp,
+          });
+        }
+      }
+    } catch (e) {
+      print('Error updating emergency request: $e');
+    }
   }
 
   static Future<void> acceptRequest(String requestId) async {
@@ -151,6 +109,10 @@ class FirebasePoliceService {
 }
 
 class AARCSTrafficPoliceDashboard extends StatefulWidget {
+  final Map<String, dynamic>? initialAlertPayload;
+
+  const AARCSTrafficPoliceDashboard({super.key, this.initialAlertPayload});
+
   @override
   _AARCSTrafficPoliceDashboardState createState() =>
       _AARCSTrafficPoliceDashboardState();
@@ -181,7 +143,6 @@ class _AARCSTrafficPoliceDashboardState
 
   final String _googleApiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
 
-  // Track last shown notification to avoid duplicates
   String _lastShownAlertId = '';
 
   @override
@@ -189,19 +150,45 @@ class _AARCSTrafficPoliceDashboardState
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
 
-    // Initialize notifications FIRST
     _initializeNotifications().then((_) {
-      // Start listening and polling AFTER notifications are initialized
       _listenToEmergencyRequests();
       _listenToTrafficClearanceAlerts();
       _startPollingForAlerts();
       _startNotificationCheckTimer();
       _startLocationTracking();
     });
+
+    // If there's an initial alert from notification tap, show it
+    if (widget.initialAlertPayload != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showRequestFromPayload(widget.initialAlertPayload!);
+      });
+    }
   }
 
   Future<void> _initializeNotifications() async {
-    await LocalNotificationService.initialize();
+    // Already initialized in main, nothing needed here
+  }
+
+  void _showRequestFromPayload(Map<String, dynamic> payload) {
+    setState(() {
+      hasEmergencyAlert = true;
+      hasActiveEmergencyRequest = true;
+      currentAlertId = payload['alertId'];
+      currentEmergencyRequest = {
+        'ambulanceId': payload['ambulanceId'] ?? 'Unknown',
+        'destination': payload['destination'] ?? 'Unknown',
+        'eta': payload['eta'] ?? 'N/A',
+        'distance': payload['distance'] ?? 'N/A',
+        'priority': payload['priority'] ?? 3,
+        'priorityLabel': payload['priorityLabel'] ?? 'MEDIUM',
+        'currentLocation': payload['currentLocation'] ?? 'Unknown',
+        'status': 'active',
+        'isTrafficAlert': true,
+        'alertId': payload['alertId'],
+        'requestId': payload['requestId'],
+      };
+    });
   }
 
   @override
@@ -215,58 +202,7 @@ class _AARCSTrafficPoliceDashboardState
     super.dispose();
   }
 
-  void _showAlertDialog(Map<String, dynamic> alertData, String alertId) {
-    if (!mounted) return;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.traffic, color: Colors.orange),
-            SizedBox(width: 10),
-            Text('🚨 TRAFFIC CLEARANCE REQUEST'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Ambulance: ${alertData['ambulanceId']}'),
-            const SizedBox(height: 8),
-            Text('Destination: ${alertData['destination']}'),
-            const SizedBox(height: 8),
-            Text('ETA: ${alertData['eta'] ?? 'N/A'}'),
-            const SizedBox(height: 8),
-            Text('Distance: ${alertData['distance'] ?? 'N/A'}'),
-            const SizedBox(height: 8),
-            Text('Priority: ${alertData['priorityLabel'] ?? 'MEDIUM'}'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _acknowledgeTrafficAlert(alertId);
-            },
-            child: const Text('ACKNOWLEDGE'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context); // Just close dialog, don't acknowledge
-              // Don't call _acknowledgeTrafficAlert here
-              _handleTrafficAlertForResponse(alertData, alertId);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-            ),
-            child: const Text('VIEW & RESPOND'),
-          ),
-        ],
-      ),
-    );
-  }
+  // REMOVED: _showAlertDialog method - no dialogs
 
   void _startPollingForAlerts() {
     _alertPollingTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
@@ -277,9 +213,7 @@ class _AARCSTrafficPoliceDashboardState
           final alertId = latestAlert['alertId'];
           final alertData = latestAlert['data'];
 
-          // Check if this alert is already acknowledged
           if (alertData['acknowledged'] != true && alertData['status'] == 'active') {
-            // Only show if it's a new alert
             if (alertId != _lastShownAlertId) {
               _lastShownAlertId = alertId;
               _handleBackgroundAlert(alertData, alertId);
@@ -306,16 +240,10 @@ class _AARCSTrafficPoliceDashboardState
         final alertId = latestAlert['alertId'];
         final alertData = latestAlert['data'];
 
-        // If alert is active and not acknowledged, show notification
         if (alertData['acknowledged'] != true &&
             alertData['status'] == 'active' &&
             alertId != _lastShownAlertId) {
-          await LocalNotificationService.showTrafficAlert(
-            alertData['ambulanceId'] ?? 'Unknown',
-            alertData['destination'] ?? 'Hospital',
-            alertId,
-          );
-
+          await _showTrafficAlertNotification(alertData, alertId);
           _lastShownAlertId = alertId;
         }
       }
@@ -325,19 +253,44 @@ class _AARCSTrafficPoliceDashboardState
   }
 
   void _handleBackgroundAlert(Map<String, dynamic> alertData, String alertId) {
-    // Show system notification
-    LocalNotificationService.showTrafficAlert(
-      alertData['ambulanceId'] ?? 'Unknown',
-      alertData['destination'] ?? 'Hospital',
-      alertId,
-    );
+    _showTrafficAlertNotification(alertData, alertId);
+    // REMOVED: dialog call
+  }
 
-    // If app is in foreground, also show dialog
-    if (mounted && ModalRoute.of(context)?.isCurrent == true) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _showAlertDialog(alertData, alertId);
-      });
-    }
+  Future<void> _showTrafficAlertNotification(Map<String, dynamic> alertData, String alertId) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+    AndroidNotificationDetails(
+      'traffic_alerts',
+      'Traffic Clearance Alerts',
+      importance: Importance.max,
+      priority: Priority.high,
+    );
+    const NotificationDetails platformChannelSpecifics =
+    NotificationDetails(android: androidPlatformChannelSpecifics);
+
+    String title = '🚦 Traffic Clearance Request';
+    String body = 'Ambulance ${alertData['ambulanceId']} needs clearance to ${alertData['destination']}';
+
+    Map<String, dynamic> payloadData = {
+      'alertId': alertId,
+      'ambulanceId': alertData['ambulanceId'],
+      'destination': alertData['destination'],
+      'eta': alertData['eta'],
+      'distance': alertData['distance'],
+      'priority': alertData['priority'],
+      'priorityLabel': alertData['priorityLabel'],
+      'currentLocation': alertData['currentLocation'],
+      'requestId': alertData['requestId'],
+    };
+    String payload = jsonEncode(payloadData);
+
+    await flutterLocalNotificationsPlugin.show(
+      0,
+      title,
+      body,
+      platformChannelSpecifics,
+      payload: payload,
+    );
   }
 
   void _listenToTrafficClearanceAlerts() {
@@ -351,7 +304,11 @@ class _AARCSTrafficPoliceDashboardState
 
               alerts.forEach((alertId, value) {
                 final alertData = Map<String, dynamic>.from(value as Map);
-
+                final timestamp = alertData['timestamp'] ?? 0;
+                final now = DateTime.now().millisecondsSinceEpoch;
+                if (now - timestamp > 5 * 60 * 1000) {
+                  return;
+                }
                 if (alertData['status'] == 'active' &&
                     alertData['acknowledged'] != true) {
                   print('📢 New traffic clearance alert: $alertId');
@@ -367,30 +324,20 @@ class _AARCSTrafficPoliceDashboardState
   }
 
   void _handleTrafficAlert(Map<String, dynamic> alertData, String alertId) {
-    // Update last shown alert ID
     _lastShownAlertId = alertId;
 
-    // Show system notification
-    LocalNotificationService.showTrafficAlert(
-      alertData['ambulanceId'] ?? 'Unknown',
-      alertData['destination'] ?? 'Hospital',
-      alertId,
-    );
+    _showTrafficAlertNotification(alertData, alertId);
 
-    // If app is in foreground, show dialog and update UI
     if (mounted) {
-      // Check if we already have this alert active
       if (currentAlertId == alertId && hasActiveEmergencyRequest) {
-        return; // Don't show duplicate
+        return;
       }
-
-      _showAlertDialog(alertData, alertId);
 
       setState(() {
         hasEmergencyAlert = true;
         hasActiveEmergencyRequest = true;
         currentRequestId = alertId;
-        currentAlertId = alertId; // Store the alert ID
+        currentAlertId = alertId;
         currentEmergencyRequest = {
           'ambulanceId': alertData['ambulanceId'] ?? 'Unknown',
           'destination': alertData['destination'] ?? 'Unknown',
@@ -405,32 +352,6 @@ class _AARCSTrafficPoliceDashboardState
           'requestId': alertData['requestId'],
         };
       });
-
-      // Show in-app snackbar
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.traffic, color: Colors.white),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '🚨 Ambulance ${alertData['ambulanceId']} needs traffic clearance!',
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 5),
-          action: SnackBarAction(
-            label: 'ACKNOWLEDGE',
-            textColor: Colors.white,
-            onPressed: () {
-              _acknowledgeTrafficAlert(alertId);
-            },
-          ),
-        ),
-      );
     }
   }
 
@@ -457,7 +378,6 @@ class _AARCSTrafficPoliceDashboardState
       };
     });
 
-    // Navigate to response screen after a short delay
     Future.delayed(const Duration(milliseconds: 300), () {
       _navigateToEmergencyResponse();
     });
@@ -465,10 +385,19 @@ class _AARCSTrafficPoliceDashboardState
 
   Future<void> _acknowledgeTrafficAlert(String alertId) async {
     try {
-      await FirebasePoliceService.acknowledgeTrafficAlert(alertId, 'TP-2024-156');
+      String policeId = FirebaseAuth.instance.currentUser?.uid ?? 'TP-UNKNOWN';
+
+      await FirebasePoliceService.acknowledgeTrafficAlert(alertId, policeId);
       print('✅ Traffic alert acknowledged: $alertId');
 
       if (mounted) {
+        setState(() {
+          hasEmergencyAlert = false;
+          hasActiveEmergencyRequest = false;
+          currentEmergencyRequest = null;
+          currentAlertId = null;
+        });
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Row(
@@ -482,13 +411,6 @@ class _AARCSTrafficPoliceDashboardState
             duration: Duration(seconds: 2),
           ),
         );
-
-        // Clear the alert from UI
-        setState(() {
-          hasEmergencyAlert = false;
-          hasActiveEmergencyRequest = false;
-          currentEmergencyRequest = null;
-        });
       }
     } catch (e) {
       print('❌ Error acknowledging traffic alert: $e');
@@ -962,7 +884,7 @@ class _AARCSTrafficPoliceDashboardState
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withAlpha((255 * 0.1).round()), // 10% opacity,
+              color: Colors.grey.withAlpha((255 * 0.1).round()),
               spreadRadius: 1,
               blurRadius: 5,
               offset: const Offset(0, 2)),
@@ -1192,39 +1114,6 @@ class _AARCSTrafficPoliceDashboardState
                 const SizedBox(height: 12),
                 _buildDetailRow('Distance', currentEmergencyRequest!['distance'] ?? '--'),
                 const SizedBox(height: 20),
-                if (isTrafficAlert)
-                  Column(
-                    children: [
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: () {
-                            if (currentEmergencyRequest!['alertId'] != null) {
-                              _acknowledgeTrafficAlert(currentEmergencyRequest!['alertId']);
-                            }
-                            _navigateToEmergencyResponse();
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange,
-                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                          child: const Text(
-                            'ACKNOWLEDGE & CLEAR',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                  ),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -1260,7 +1149,7 @@ class _AARCSTrafficPoliceDashboardState
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 90, // Increased width slightly
+          width: 90,
           child: Text(
             '$label:',
             style: TextStyle(
@@ -1270,8 +1159,8 @@ class _AARCSTrafficPoliceDashboardState
             ),
           ),
         ),
-        const SizedBox(width: 8), // Reduced from 12
-        Expanded( // Wrap in Expanded
+        const SizedBox(width: 8),
+        Expanded(
           child: Text(
             value,
             style: const TextStyle(
@@ -1279,7 +1168,7 @@ class _AARCSTrafficPoliceDashboardState
               fontSize: 14,
               color: Colors.black87,
             ),
-            maxLines: 2, // Allow wrapping
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -1373,15 +1262,28 @@ class _AARCSTrafficPoliceDashboardState
 
         final requestDataCopy = Map<String, dynamic>.from(currentEmergencyRequest!);
 
-        // If it's a traffic alert, acknowledge it
-        if (currentEmergencyRequest!['isTrafficAlert'] == true &&
-            currentEmergencyRequest!['alertId'] != null) {
-          await _acknowledgeTrafficAlert(currentEmergencyRequest!['alertId']);
+        // If it's a traffic alert, just acknowledge and return (no navigation)
+        if (currentEmergencyRequest!['isTrafficAlert'] == true) {
+          if (currentEmergencyRequest!['alertId'] != null) {
+            await _acknowledgeTrafficAlert(currentEmergencyRequest!['alertId']);
+          }
+          setState(() {
+            hasActiveEmergencyRequest = false;
+            hasEmergencyAlert = false;
+          });
+          return;
+        }
+
+        // Otherwise, it's an ambulance request: need coordinates
+        if (requestDataCopy['destCoords'] == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No destination coordinates'), backgroundColor: Colors.red),
+          );
+          return;
         }
 
         // If it has a requestId from emergency_requests, accept it
-        if (currentRequestId != null &&
-            currentEmergencyRequest!['isTrafficAlert'] != true) {
+        if (currentRequestId != null) {
           await FirebasePoliceService.acceptRequest(currentRequestId!);
           print("Request accepted in Firebase");
         }

@@ -31,6 +31,7 @@ class FirebaseClient:
         self.current_call_id = None
         self.app = None
         self.conversation = []  # Track full conversation for summary
+        self.database = None  # Will hold the database reference
         
         try:
             # Get the path from environment
@@ -57,17 +58,21 @@ class FirebaseClient:
             self.app = firebase_admin.initialize_app(cred, {
                 'databaseURL': database_url
             })
+            
+            # FIXED: Initialize self.database as a reference
+            self.database = db.reference()
             self.initialized = True
             print("✅ Firebase Admin initialized successfully")
             
             # Test the connection
             try:
-                ref = db.reference('/')
+                # Use self.database instead of db.reference()
+                ref = self.database.child('/')
                 ref.get()
                 print("✅ Firebase connection test successful")
                 
                 # Test write permission
-                test_ref = db.reference('_connection_test')
+                test_ref = self.database.child('_connection_test')
                 test_ref.set({'timestamp': int(time.time() * 1000), 'status': 'ok'})
                 print("✅ Firebase write test successful")
                 test_ref.delete()
@@ -122,12 +127,8 @@ class FirebaseClient:
     
     def log_message(self, speaker, message):
         """Log a single message to the current call"""
-        if not self.initialized:
-            print("⚠️ Firebase not initialized, cannot log message")
-            return False
-            
-        if not self.current_call_id:
-            print("⚠️ No active call, cannot log message")
+        if not self.initialized or not self.current_call_id:
+            print("⚠️ Cannot log message - no active call")
             return False
             
         try:
@@ -136,33 +137,26 @@ class FirebaseClient:
             time_str = datetime.now().strftime('%H:%M:%S')
             
             message_data = {
-                'speaker': speaker,  # 'agent' or 'user'
+                'speaker': speaker,
                 'message': message,
                 'timestamp': timestamp,
                 'time': time_str
             }
             
-            # Store in local conversation list for summary
+            print(f"📤 Writing message to: live_calls/{self.current_call_id}/messages/{message_id}")
+            print(f"   Message: [{speaker}] {message[:50]}...")
+            
+            # FIXED: Use .child() instead of .reference()
+            ref = self.database.child(f'live_calls/{self.current_call_id}/messages/{message_id}')
+            ref.set(message_data)
+            
+            # Also store in local conversation
             self.conversation.append({
                 'speaker': speaker,
                 'message': message,
                 'time': time_str,
                 'timestamp': timestamp
             })
-            
-            print(f"📤 Writing message to: live_calls/{self.current_call_id}/messages/{message_id}")
-            print(f"   Message: [{speaker}] {message[:50]}...")
-            
-            # Push to messages node
-            ref = db.reference(f'live_calls/{self.current_call_id}/messages/{message_id}')
-            ref.set(message_data)
-            
-            # Verify
-            verification = ref.get()
-            if verification:
-                print(f"✅ Message verified in Firebase")
-            else:
-                print(f"⚠️ Message verification failed")
             
             return True
             
@@ -256,16 +250,15 @@ class FirebaseClient:
             
             print(f"📤 Updating call status to completed")
             
-            # Update call status
-            ref = db.reference(f'live_calls/{self.current_call_id}')
+            # FIXED: Use .child() instead of .reference()
+            ref = self.database.child(f'live_calls/{self.current_call_id}')
             ref.update({
                 'status': 'completed',
                 'endTime': datetime.now().isoformat()
             })
             
-            # Save summary to a separate node
             print(f"📤 Saving summary to: call_summaries/{self.current_call_id}")
-            summary_ref = db.reference(f'call_summaries/{self.current_call_id}')
+            summary_ref = self.database.child(f'call_summaries/{self.current_call_id}')
             summary_ref.set(summary_data)
             
             print(f"✅ Call ended and summary saved: {self.current_call_id}")
@@ -306,3 +299,78 @@ class FirebaseClient:
         except Exception as e:
             print(f"⚠️ Error updating emergency info: {e}")
             return False
+
+
+    def create_emergency_request(self, call_summary, location, emergency_type, description, urgency):
+        """Create a pending emergency request in Firebase that will be assigned to an ambulance."""
+        if not self.initialized:
+            print("⚠️ Firebase not initialized, cannot create emergency request")
+            return None
+        
+        try:
+            # Convert urgency to priority number
+            urgency_map = {
+                'critical': 0,
+                'urgent': 1,
+                'high': 1,
+                'medium': 2,
+                'normal': 3,
+                'low': 3
+            }
+            priority = urgency_map.get(urgency.lower(), 3)
+            
+            priority_labels = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
+            priority_label = priority_labels[priority] if priority < 4 else 'MEDIUM'
+            
+            lat = location.get('latitude') if location else None
+            lng = location.get('longitude') if location else None
+            address = location.get('formatted_address') if location else call_summary.get('call_summary', {}).get('location', 'Unknown')
+            
+            request_data = {
+                'ambulanceId': None,
+                'destination': address,
+                'currentLocation': address,
+                'destCoords': {
+                    'lat': lat,
+                    'lng': lng
+                } if lat and lng else None,
+                'sourceCoords': {
+                    'lat': lat,
+                    'lng': lng
+                } if lat and lng else None,
+                'status': 'pending',
+                'timestamp': int(time.time() * 1000),
+                'priority': priority,
+                'priorityLabel': priority_label,
+                'description': description,
+                'emergency_type': emergency_type,
+                'callSummaryId': self.current_call_id,
+                'source': 'nlp',
+                'eta': 'N/A',
+                'distance': 'N/A'
+            }
+            
+            request_data = {k: v for k, v in request_data.items() if v is not None}
+            
+            print(f"📤 Creating emergency request in Firebase")
+            print(f"   Type: {emergency_type}, Priority: {priority_label}")
+            print(f"   Location: {address}")
+            
+            # FIXED: Use .child() instead of .reference()
+            ref = self.database.child('emergency_requests')
+            new_ref = ref.push(request_data)
+            request_id = new_ref.key
+            
+            print(f"✅ Emergency request created with ID: {request_id}")
+            
+            if self.current_call_id:
+                summary_ref = self.database.child(f'call_summaries/{self.current_call_id}')
+                summary_ref.update({'request_id': request_id})
+            
+            return request_id
+            
+        except Exception as e:
+            print(f"❌ Error creating emergency request: {e}")
+            import traceback
+            traceback.print_exc()
+            return None

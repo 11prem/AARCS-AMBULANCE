@@ -8,17 +8,47 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'config.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'screens/emergency_response_screen.dart';
+import 'models/priority_model.dart';
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+FlutterLocalNotificationsPlugin();
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Load environment variables
   await dotenv.load(fileName: ".env");
+
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+  final DarwinInitializationSettings initializationSettingsIOS =
+  DarwinInitializationSettings();
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+    iOS: initializationSettingsIOS,
+  );
+  await flutterLocalNotificationsPlugin.initialize(
+    initializationSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse response) async {
+      if (response.payload != null) {
+        final data = jsonDecode(response.payload!);
+        // Navigate to dashboard with the alert data
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (_) => AARCSTrafficPoliceDashboard(
+              initialAlertPayload: data,
+            ),
+          ),
+        );
+      }
+    },
+  );
 
   runApp(const MyApp());
 }
@@ -42,6 +72,7 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Traffic Police System',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -152,7 +183,6 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // Show loading indicator
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -167,7 +197,6 @@ class _LoginScreenState extends State<LoginScreen> {
       print('🔍 Connecting to: $backendUrl/authenticate/police');
       print('🚔 Authenticating: $id');
 
-      // Send authentication request to police endpoint
       final response = await http.post(
         Uri.parse(Config.policeAuthEndpoint),
         headers: {'Content-Type': 'application/json'},
@@ -190,7 +219,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
           print('✅ Token received, signing in to Firebase...');
 
-          // Sign in to Firebase with custom token
           await FirebaseAuth.instance.signInWithCustomToken(customToken);
 
           await _saveCredentials();
@@ -201,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen> {
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(
-                builder: (context) => AARCSTrafficPoliceDashboard(),
+                builder: (context) => const AARCSTrafficPoliceDashboard(),
               ),
             );
           }

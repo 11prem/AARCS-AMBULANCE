@@ -4,23 +4,31 @@ const HistoryCard = {
     render(historyItem) {
         const card = document.createElement('div');
         card.className = 'history-card';
-        card.dataset.requestId = historyItem.requestId;
+        card.dataset.requestId = historyItem.id || historyItem.requestId;
         
         const formattedDate = window.Helpers.formatTimestamp(historyItem.timestamp);
-        const statusIcon = window.Helpers.getStatusIcon(historyItem.status);
+        const statusIcon = historyItem.icon || window.Helpers.getStatusIcon(historyItem.status);
         const priorityClass = window.Helpers.getPriorityClass(historyItem.priority);
+        
+        // Determine title based on type
+        let title = historyItem.ambulanceId;
+        if (historyItem.type === 'police_action') {
+            title = `🚓 Police Action - ${historyItem.acknowledgedBy}`;
+        }
         
         const summary = document.createElement('div');
         summary.className = 'history-card-summary';
         summary.innerHTML = `
             <div class="history-id">
                 <i class="fas ${statusIcon}"></i>
-                <span>${historyItem.ambulanceId}</span>
+                <span>${title}</span>
             </div>
             <div class="history-hospital">${window.Helpers.truncateText(historyItem.destination, 25)}</div>
             <div class="history-date">${formattedDate}</div>
             <div><span class="history-priority ${priorityClass}">${historyItem.priorityLabel || 'MEDIUM'}</span></div>
-            <div><span class="history-status status-${historyItem.status}">${historyItem.status.toUpperCase()}</span></div>
+            <div><span class="history-status status-${historyItem.type === 'police_action' ? 'completed' : historyItem.status}">
+                ${historyItem.type === 'police_action' ? 'CLEARED' : historyItem.status.toUpperCase()}
+            </span></div>
             <button class="expand-btn">
                 <i class="fas fa-chevron-down"></i>
             </button>
@@ -45,9 +53,12 @@ const HistoryCard = {
     // Render detailed view
     renderDetails(historyItem) {
         const startTime = window.Helpers.formatTimestamp(historyItem.timestamp);
-        const completedTime = window.Helpers.formatTimestamp(historyItem.completed_at);
+        const completedTime = window.Helpers.formatTimestamp(historyItem.completed_at || historyItem.acknowledgedAt);
         const acceptedTime = window.Helpers.formatTimestamp(historyItem.accepted_at);
-        const duration = window.Helpers.calculateDuration(historyItem.timestamp, historyItem.completed_at);
+        const duration = window.Helpers.calculateDuration(
+            historyItem.timestamp, 
+            historyItem.completed_at || historyItem.acknowledgedAt
+        );
         const priorityClass = window.Helpers.getPriorityClass(historyItem.priority);
         
         let emergencyConditionHtml = '';
@@ -63,6 +74,76 @@ const HistoryCard = {
             `;
         }
         
+        // Police action specific HTML
+        if (historyItem.type === 'police_action') {
+            return `
+                <div class="details-grid">
+                    <div class="details-section">
+                        <h4><i class="fas fa-traffic-light"></i> Traffic Clearance Details</h4>
+                        <div class="detail-row">
+                            <span class="detail-label">Alert ID:</span>
+                            <span class="detail-value" style="font-family: monospace;">${historyItem.alertId}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Officer:</span>
+                            <span class="detail-value">${historyItem.acknowledgedBy}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Ambulance:</span>
+                            <span class="detail-value">${historyItem.ambulanceId}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Destination:</span>
+                            <span class="detail-value">${historyItem.destination}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="details-section">
+                        <h4><i class="fas fa-clock"></i> Timeline</h4>
+                        <div class="detail-row">
+                            <span class="detail-label">Requested:</span>
+                            <span class="detail-value">${startTime}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Acknowledged:</span>
+                            <span class="detail-value">${completedTime}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Response Time:</span>
+                            <span class="detail-value"><strong>${duration}</strong></span>
+                        </div>
+                    </div>
+                    
+                    <div class="details-section">
+                        <h4><i class="fas fa-route"></i> Route Information</h4>
+                        <div class="detail-row">
+                            <span class="detail-label">Location:</span>
+                            <span class="detail-value">${historyItem.currentLocation}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">ETA:</span>
+                            <span class="detail-value">${historyItem.eta}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Distance:</span>
+                            <span class="detail-value">${historyItem.distance}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="details-section">
+                        <h4><i class="fas fa-exclamation-triangle"></i> Priority</h4>
+                        <div class="detail-row">
+                            <span class="detail-label">Level:</span>
+                            <span class="detail-value">
+                                <span class="history-priority ${priorityClass}">${historyItem.priorityLabel}</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Original ambulance trip HTML
         return `
             <div class="details-grid">
                 <div class="details-section">

@@ -1,26 +1,18 @@
 // lib/screens/dashboard.dart
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
-
 import 'package:geolocator/geolocator.dart';
-
 import 'package:http/http.dart' as http;
-
 import 'route_navigation.dart';
-
 import 'history_screen.dart';
-
 import 'dart:async';
-
 import 'package:firebase_database/firebase_database.dart';
-
 import 'package:firebase_core/firebase_core.dart';
-
 import '../models/priority_model.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import '../main.dart' show flutterLocalNotificationsPlugin, navigatorKey;
 
 class DashboardScreen extends StatefulWidget {
   final String ambulanceId;
@@ -42,6 +34,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   final TextEditingController _justificationController =
   TextEditingController();
 
+  StreamSubscription<DatabaseEvent>? _assignedRequestSubscription;
+  bool _isNavigatingToRequest = false;
+  // ignore: unused_field
   bool _isButtonPressed = false;
   bool _isLoading = false;
   Position? _currentPosition;
@@ -50,12 +45,10 @@ class _DashboardScreenState extends State<DashboardScreen>
   List<dynamic> _searchSuggestions = [];
   late TabController _tabController;
 
-  // Selected hospital for priority selection
   Map<String, dynamic>? _selectedHospital;
 
   final String _googleApiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
 
-  // Enhanced filtering keywords
   final List<String> _allowedNameKeywords = [
     'hospital',
     'multi specialty',
@@ -132,73 +125,77 @@ class _DashboardScreenState extends State<DashboardScreen>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _refreshLocationAndHospitals();
+    _listenForAssignedRequest();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkForExistingRequest();
+    });
   }
 
   Future<void> _refreshLocationAndHospitals() async {
-    setState(() {
-      _isLoading = true;
-    });
-
+    setState(() => _isLoading = true);
     await _determinePositionWithFallback();
     await _fetchNearbyHospitals();
-
-    setState(() {
-      _isLoading = false;
-    });
+    setState(() => _isLoading = false);
   }
 
   Future<void> _determinePositionWithFallback() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      print('📍 Location service enabled: $serviceEnabled');
+
       if (!serviceEnabled) {
+        print('❌ Location services disabled');
         await Geolocator.openLocationSettings();
         return;
       }
 
       LocationPermission permission = await Geolocator.checkPermission();
+      print('📍 Current permission: $permission');
+
       if (permission == LocationPermission.denied) {
+        print('📍 Requesting permission...');
         permission = await Geolocator.requestPermission();
+        print('📍 Permission after request: $permission');
       }
 
       if (permission == LocationPermission.deniedForever) {
+        print('❌ Permission permanently denied');
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Location permissions are permanently denied')),
+          const SnackBar(content: Text('Location permissions are permanently denied')),
         );
         return;
       }
 
       try {
         final pos = await Geolocator.getCurrentPosition(
-            desiredAccuracy: LocationAccuracy.high);
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 10),
+        );
+        print('📍 Got current position: ${pos.latitude}, ${pos.longitude}');
         _currentPosition = pos;
       } catch (e) {
+        print('❌ Error getting current position: $e');
         final last = await Geolocator.getLastKnownPosition();
-        _currentPosition = last;
-        debugPrint('Current position failed, using lastKnown: $e');
+        if (last != null) {
+          print('📍 Using last known position: ${last.latitude}, ${last.longitude}');
+          _currentPosition = last;
+        } else {
+          print('❌ No last known position available');
+        }
       }
     } catch (e) {
-      debugPrint('Error determining position: $e');
+      print('❌ Error determining position: $e');
     }
   }
 
   bool _isValidHospital(String name, List<String> types) {
     final String nameLower = name.toLowerCase();
-
     for (String excludeKeyword in _excludeKeywords) {
-      if (nameLower.contains(excludeKeyword.toLowerCase())) {
-        return false;
-      }
+      if (nameLower.contains(excludeKeyword.toLowerCase())) return false;
     }
-
-    bool nameMatch =
-    _allowedNameKeywords.any((kw) => nameLower.contains(kw.toLowerCase()));
-
+    bool nameMatch = _allowedNameKeywords.any((kw) => nameLower.contains(kw.toLowerCase()));
     bool typeMatch = types.any((type) =>
-    type.contains('hospital') ||
-        type.contains('health') ||
-        type.contains('establishment'));
-
+    type.contains('hospital') || type.contains('health') || type.contains('establishment'));
     return nameMatch || (typeMatch && !nameLower.contains('clinic'));
   }
 
@@ -208,7 +205,6 @@ class _DashboardScreenState extends State<DashboardScreen>
             '?place_id=$placeId'
             '&fields=opening_hours,current_opening_hours'
             '&key=$_googleApiKey');
-
     try {
       final resp = await http.get(detailsUrl);
       if (resp.statusCode == 200) {
@@ -225,30 +221,31 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Map<String, dynamic> _getOpeningStatus(
       Map<String, dynamic>? openingHours, Map<String, dynamic>? currentOpeningHours) {
-    if (currentOpeningHours != null &&
-        currentOpeningHours.containsKey('open_now')) {
+    if (currentOpeningHours != null && currentOpeningHours.containsKey('open_now')) {
       return {
         'isOpen': currentOpeningHours['open_now'] as bool,
         'isKnown': true,
       };
     }
-
     if (openingHours != null && openingHours.containsKey('open_now')) {
       return {
         'isOpen': openingHours['open_now'] as bool,
         'isKnown': true,
       };
     }
-
-    return {
-      'isOpen': false,
-      'isKnown': false,
-    };
+    return {'isOpen': false, 'isKnown': false};
   }
 
   Future<void> _fetchNearbyHospitals() async {
+    print('🔑 API Key loaded: ${_googleApiKey.substring(0, 5)}...'); // Partial key for debugging
+    print('📍 Current position: $_currentPosition');
+    print('📍 Fetching hospitals with key: $_googleApiKey');
+    print('📍 Position: $_currentPosition');
+
     nearbyHospitals = [];
+
     if (_currentPosition == null) {
+      print('❌ Current position is null');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Location not available to find hospitals")),
       );
@@ -262,19 +259,48 @@ class _DashboardScreenState extends State<DashboardScreen>
         '&type=hospital'
         '&key=$_googleApiKey';
 
+    print('📡 Making API call to: $placesUrl');
+
     try {
       setState(() => _isLoading = true);
       final resp = await http.get(Uri.parse(placesUrl));
+
+      print('📡 Response status code: ${resp.statusCode}');
+
       if (resp.statusCode != 200) {
+        print('❌ Places API error: ${resp.body}');
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text("Failed to fetch hospitals. Try again later.")),
+          SnackBar(
+            content: Text("Failed to fetch hospitals. Status: ${resp.statusCode}"),
+            backgroundColor: Colors.red,
+          ),
         );
         return;
       }
 
+      // Print first 500 chars of response body for debugging
+      print('📡 Response body preview: ${resp.body.length > 500 ? resp.body.substring(0, 500) + '...' : resp.body}');
+
       final data = json.decode(resp.body);
+      print('📍 API Status: ${data['status']}');
+      print('📍 Error message: ${data['error_message'] ?? 'None'}');
+
+      if (data['status'] != 'OK') {
+        print('❌ API returned error status: ${data['status']}');
+        if (data['status'] == 'REQUEST_DENIED') {
+          print('❌ REQUEST_DENIED - This usually means:');
+          print('   1. API key is invalid');
+          print('   2. Places API is not enabled');
+          print('   3. API key has restrictions');
+        } else if (data['status'] == 'ZERO_RESULTS') {
+          print('📍 No hospitals found in this area');
+        }
+        // Don't return here - let the function continue with empty results
+      }
+
       final results = (data['results'] as List?) ?? [];
+      print('📍 Raw results count: ${results.length}');
+
       final List<Map<String, dynamic>> hospitals = [];
 
       for (var place in results) {
@@ -302,9 +328,14 @@ class _DashboardScreenState extends State<DashboardScreen>
           }
         }
 
+        print('📍 Processing hospital: $name');
+        print('   - Types: $types');
+
         if (!_isValidHospital(name, types)) {
+          print('   - ❌ Filtered out by _isValidHospital');
           continue;
         }
+        print('   - ✅ Passed validation');
 
         final double distanceMeters = Geolocator.distanceBetween(
           _currentPosition!.latitude,
@@ -312,11 +343,9 @@ class _DashboardScreenState extends State<DashboardScreen>
           lat,
           lng,
         );
+        print('   - Distance: ${(distanceMeters / 1000).toStringAsFixed(2)} km');
 
-        Map<String, dynamic> openingStatus = {
-          'isOpen': false,
-          'isKnown': false,
-        };
+        Map<String, dynamic> openingStatus = {'isOpen': false, 'isKnown': false};
 
         if (place['opening_hours'] != null) {
           openingStatus = _getOpeningStatus(
@@ -329,8 +358,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   ? Map<String, dynamic>.from(placeDetails['opening_hours'])
                   : null,
               placeDetails['current_opening_hours'] != null
-                  ? Map<String, dynamic>.from(
-                  placeDetails['current_opening_hours'])
+                  ? Map<String, dynamic>.from(placeDetails['current_opening_hours'])
                   : null,
             );
           }
@@ -344,27 +372,27 @@ class _DashboardScreenState extends State<DashboardScreen>
           'lng': lng,
           'rating': rating,
           'distance_m': distanceMeters,
-          'distance_text':
-          (distanceMeters / 1000).toStringAsFixed(2) + ' km',
+          'distance_text': (distanceMeters / 1000).toStringAsFixed(2) + ' km',
           'isOpen': openingStatus['isOpen'],
           'isOpeningStatusKnown': openingStatus['isKnown'],
         });
       }
 
+      print('📍 Hospitals after validation: ${hospitals.length}');
+
       if (hospitals.isEmpty) {
-        setState(() {
-          nearbyHospitals = [];
-        });
+        print('📍 No hospitals passed validation');
+        setState(() => nearbyHospitals = []);
         return;
       }
 
-      hospitals.sort(
-              (a, b) => (a['distance_m'] as double).compareTo(b['distance_m']));
+      hospitals.sort((a, b) => (a['distance_m'] as double).compareTo(b['distance_m']));
       final limited = hospitals.take(10).toList();
-      setState(() {
-        nearbyHospitals = limited;
-      });
+      print('📍 Final hospitals count: ${limited.length}');
+
+      setState(() => nearbyHospitals = limited);
     } catch (e) {
+      print('❌ Exception in _fetchNearbyHospitals: $e');
       debugPrint('Error fetching hospitals: $e');
     } finally {
       setState(() => _isLoading = false);
@@ -376,7 +404,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       setState(() => _searchSuggestions = []);
       return;
     }
-
     if (_currentPosition == null) return;
 
     final url = Uri.parse(
@@ -392,11 +419,9 @@ class _DashboardScreenState extends State<DashboardScreen>
         final data = json.decode(resp.body);
         final predictions = (data['predictions'] as List?) ?? [];
         final filtered = predictions.where((pred) {
-          final desc =
-          (pred['description'] ?? '').toString().toLowerCase();
+          final desc = (pred['description'] ?? '').toString().toLowerCase();
           return _hospitalKeywords.any((kw) => desc.contains(kw));
         }).toList();
-
         setState(() => _searchSuggestions = filtered);
       }
     } catch (e) {
@@ -404,12 +429,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
   }
 
-  // ✅ NEW: Show priority selection bottom sheet
   void _showPrioritySelectionSheet(Map<String, dynamic> hospital) {
-    setState(() {
-      _selectedHospital = hospital;
-    });
-
+    setState(() => _selectedHospital = hospital);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -418,7 +439,225 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  // ✅ NEW: Priority selection bottom sheet UI
+  void _listenForAssignedRequest() {
+    final database = FirebaseDatabase.instanceFor(
+      app: Firebase.app(),
+      databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+    ).ref();
+
+    _assignedRequestSubscription = database
+        .child('emergency_requests')
+        .orderByChild('ambulanceId')
+        .equalTo(widget.ambulanceId)
+        .onValue
+        .listen((event) {
+      if (!mounted || _isNavigatingToRequest) return;
+      if (event.snapshot.exists) {
+        final requests = event.snapshot.value as Map<dynamic, dynamic>;
+        for (var entry in requests.entries) {
+          final data = Map<String, dynamic>.from(entry.value);
+          if (data['status'] == 'pending') {
+            _showAssignedRequestNotification(data, entry.key);
+            if (mounted && !_isNavigatingToRequest) {
+              _handleAssignedRequest(entry.key, data);
+            }
+            break;
+          }
+        }
+      }
+    });
+  }
+
+  Future<void> _showAssignedRequestNotification(Map<String, dynamic> data, String requestId) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+    AndroidNotificationDetails(
+      'assigned_requests',
+      'Assigned Emergency Requests',
+      importance: Importance.max,
+      priority: Priority.high,
+      showWhen: true,
+    );
+    const NotificationDetails platformChannelSpecifics =
+    NotificationDetails(android: androidPlatformChannelSpecifics);
+
+    String title = '🚑 New Emergency Assigned';
+    String body = 'Destination: ${data['destination'] ?? 'Unknown'}';
+
+    double? destLat, destLng;
+    if (data['destCoords'] != null) {
+      destLat = (data['destCoords']['lat'] as num?)?.toDouble();
+      destLng = (data['destCoords']['lng'] as num?)?.toDouble();
+    }
+
+    Map<String, dynamic> payloadData = {
+      'requestId': requestId,
+      'ambulanceId': widget.ambulanceId,
+      'destination': data['destination'] ?? 'Hospital',
+      'destLat': destLat ?? 0.0,
+      'destLng': destLng ?? 0.0,
+      'priority': data['priority'] ?? 3,
+      'description': data['description'] ?? '',
+    };
+    String payload = jsonEncode(payloadData);
+
+    await flutterLocalNotificationsPlugin.show(
+      0,
+      title,
+      body,
+      platformChannelSpecifics,
+      payload: payload,
+    );
+  }
+
+  void _handleAssignedRequest(String requestId, Map<String, dynamic> data) {
+    if (!mounted || _isNavigatingToRequest) return;
+
+    double? destLat, destLng;
+    if (data['destCoords'] != null) {
+      destLat = (data['destCoords']['lat'] as num?)?.toDouble();
+      destLng = (data['destCoords']['lng'] as num?)?.toDouble();
+    }
+
+    if (destLat == null || destLng == null) {
+      print('❌ No destination coordinates in request');
+      return;
+    }
+
+    EmergencyPriority priority = EmergencyPriority.values.first;
+    if (data['priority'] != null) {
+      final priorityValue = data['priority'] as int;
+      if (priorityValue >= 0 && priorityValue < EmergencyPriority.values.length) {
+        priority = EmergencyPriority.values[priorityValue];
+      }
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.emergency, color: Colors.red),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                '🚨 New Emergency Assigned',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Destination:',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      data['destination'] ?? 'Unknown Hospital',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (data['description'] != null && data['description'].toString().isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Emergency Details:',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(data['description']),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.priority_high, color: Colors.amber.shade800, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Priority: ${data['priorityLabel'] ?? 'MEDIUM'}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.amber.shade800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('IGNORE'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _acceptRequest(requestId);
+              _navigateToRequest(data, destLat!, destLng!, priority, requestId);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('ACCEPT'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _acceptRequest(String requestId) async {
+    try {
+      await FirebaseDatabase.instanceFor(
+        app: Firebase.app(),
+        databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+      ).ref()
+          .child('emergency_requests')
+          .child(requestId)
+          .update({
+        'status': 'accepted',
+        'accepted_at': ServerValue.timestamp,
+      });
+      print('✅ Request $requestId accepted');
+    } catch (e) {
+      print('❌ Failed to accept request: $e');
+    }
+  }
+
   Widget _buildPrioritySelectionBottomSheet() {
     return Container(
       decoration: const BoxDecoration(
@@ -447,19 +686,12 @@ class _DashboardScreenState extends State<DashboardScreen>
             const SizedBox(height: 16),
             const Text(
               'Select Emergency Priority',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
             ),
             const SizedBox(height: 8),
             Text(
               'Destination: ${_selectedHospital!['name']}',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey[600],
-              ),
+              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -468,7 +700,6 @@ class _DashboardScreenState extends State<DashboardScreen>
               final config = PriorityConfig.fromPriority(priority);
               return GestureDetector(
                 onTap: () {
-                  // ✅ ANTI-MISUSE: Show verification for CRITICAL priority
                   if (priority == EmergencyPriority.critical) {
                     _showCriticalPriorityVerification(priority);
                   } else {
@@ -502,19 +733,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                             const SizedBox(height: 4),
                             Text(
                               config.description,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
+                              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                             ),
                           ],
                         ),
                       ),
-                      Icon(
-                        Icons.arrow_forward_ios,
-                        color: config.color,
-                        size: 18,
-                      ),
+                      Icon(Icons.arrow_forward_ios, color: config.color, size: 18),
                     ],
                   ),
                 ),
@@ -527,9 +751,8 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  // ✅ NEW: Critical priority verification with justification
   void _showCriticalPriorityVerification(EmergencyPriority priority) {
-    Navigator.pop(context); // Close priority sheet
+    Navigator.pop(context);
 
     showDialog(
       context: context,
@@ -564,10 +787,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   children: [
                     Text(
                       '⚠️ CRITICAL Priority is for:',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.red,
-                      ),
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
                     ),
                     SizedBox(height: 8),
                     Text(
@@ -576,8 +796,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                           '• Unconscious patient\n'
                           '• Respiratory failure\n'
                           '• Stroke symptoms',
-                      style:
-                      TextStyle(fontSize: 12, color: Colors.black87),
+                      style: TextStyle(fontSize: 12, color: Colors.black87),
                     ),
                   ],
                 ),
@@ -585,10 +804,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               const SizedBox(height: 16),
               const Text(
                 'Provide justification for CRITICAL priority:',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
               ),
               const SizedBox(height: 8),
               TextField(
@@ -597,9 +813,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 maxLength: 150,
                 decoration: InputDecoration(
                   hintText: 'Describe the emergency condition...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                   contentPadding: const EdgeInsets.all(12),
                 ),
               ),
@@ -612,14 +826,12 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
                 child: const Row(
                   children: [
-                    Icon(Icons.info_outline,
-                        size: 16, color: Colors.orange),
+                    Icon(Icons.info_outline, size: 16, color: Colors.orange),
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Misuse will be logged and reported',
-                        style:
-                        TextStyle(fontSize: 11, color: Colors.orange),
+                        style: TextStyle(fontSize: 11, color: Colors.orange),
                       ),
                     ),
                   ],
@@ -633,52 +845,39 @@ class _DashboardScreenState extends State<DashboardScreen>
             onPressed: () {
               _justificationController.clear();
               Navigator.pop(context);
-              // Show priority sheet again
               _showPrioritySelectionSheet(_selectedHospital!);
             },
             child: const Text('CANCEL'),
           ),
           ElevatedButton(
             onPressed: () {
-              final justification =
-              _justificationController.text.trim();
+              final justification = _justificationController.text.trim();
               if (justification.isEmpty || justification.length < 10) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text(
-                        'Please provide a valid justification (min 10 characters)'),
+                    content: Text('Please provide a valid justification (min 10 characters)'),
                     backgroundColor: Colors.red,
                   ),
                 );
                 return;
               }
-
               Navigator.pop(context);
-              _startNavigationWithPriority(priority,
-                  justification: justification);
+              _startNavigationWithPriority(priority, justification: justification);
               _justificationController.clear();
             },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('CONFIRM',
-                style: TextStyle(color: Colors.white)),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('CONFIRM', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
   }
 
-  // ✅ NEW: Start navigation with selected priority
-  void _startNavigationWithPriority(EmergencyPriority priority,
-      {String? justification}) {
+  void _startNavigationWithPriority(EmergencyPriority priority, {String? justification}) {
     if (_selectedHospital == null) return;
-
-    // Log critical priority usage
     if (priority == EmergencyPriority.critical && justification != null) {
       _logCriticalPriorityUsage(justification);
     }
-
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -689,30 +888,25 @@ class _DashboardScreenState extends State<DashboardScreen>
           destinationLng: _selectedHospital!['lng'],
           onToggleTheme: widget.onToggleTheme,
           priority: priority,
-          justification: justification, // ✅ PASS TO ROUTE SCREEN
+          justification: justification,
         ),
       ),
     );
   }
 
-  // ✅ NEW: Log critical priority usage to Firebase for monitoring
   Future<void> _logCriticalPriorityUsage(String justification) async {
     try {
       final logsRef = FirebaseDatabase.instanceFor(
         app: Firebase.app(),
-        databaseURL:
-        'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+        databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
       ).ref().child('critical_priority_logs').push();
-
       await logsRef.set({
         'ambulanceId': widget.ambulanceId,
         'destination': _selectedHospital!['name'],
         'justification': justification,
         'timestamp': ServerValue.timestamp,
-        'location':
-        'Lat: ${_currentPosition?.latitude}, Lng: ${_currentPosition?.longitude}',
+        'location': 'Lat: ${_currentPosition?.latitude}, Lng: ${_currentPosition?.longitude}',
       });
-
       debugPrint('✅ Critical priority usage logged');
     } catch (e) {
       debugPrint('❌ Failed to log critical priority: $e');
@@ -732,9 +926,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       elevation: 2,
       child: InkWell(
-        onTap: () {
-          _showPrioritySelectionSheet(hospital);
-        },
+        onTap: () => _showPrioritySelectionSheet(hospital),
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.all(12.0),
@@ -743,12 +935,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             children: [
               Row(
                 children: [
-                  // Fixed: Removed the yellow box container, kept just the icon
-                  Icon(
-                    Icons.local_hospital,
-                    color: Colors.red.shade700,
-                    size: 24,
-                  ),
+                  Icon(Icons.local_hospital, color: Colors.red.shade700, size: 24),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -759,8 +946,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
-                            color: Theme.of(context).brightness ==
-                                Brightness.dark
+                            color: Theme.of(context).brightness == Brightness.dark
                                 ? Colors.white
                                 : Colors.black87,
                           ),
@@ -771,15 +957,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                         Row(
                           children: [
                             if (rating > 0) ...[
-                              const Icon(Icons.star,
-                                  color: Colors.amber, size: 14),
+                              const Icon(Icons.star, color: Colors.amber, size: 14),
                               const SizedBox(width: 4),
                               Text(
                                 rating.toStringAsFixed(1),
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Theme.of(context).brightness ==
-                                      Brightness.dark
+                                  color: Theme.of(context).brightness == Brightness.dark
                                       ? Colors.white70
                                       : Colors.grey.shade600,
                                 ),
@@ -788,12 +972,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                             ],
                             if (isOpenKnown) ...[
                               Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: isOpen
-                                      ? Colors.green.shade50
-                                      : Colors.red.shade50,
+                                  color: isOpen ? Colors.green.shade50 : Colors.red.shade50,
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
@@ -801,9 +982,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   style: TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
-                                    color: isOpen
-                                        ? Colors.green.shade700
-                                        : Colors.red.shade700,
+                                    color: isOpen ? Colors.green.shade700 : Colors.red.shade700,
                                   ),
                                 ),
                               ),
@@ -833,16 +1012,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.directions_car,
-                          size: 14, color: Colors.grey.shade600),
+                      Icon(Icons.directions_car, size: 14, color: Colors.grey.shade600),
                       const SizedBox(width: 4),
                       Text(
                         distance,
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: Theme.of(context).brightness ==
-                              Brightness.dark
+                          color: Theme.of(context).brightness == Brightness.dark
                               ? Colors.white
                               : Colors.grey.shade700,
                         ),
@@ -850,19 +1027,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                     ],
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade600,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(color: Colors.red.shade600, borderRadius: BorderRadius.circular(20)),
                     child: const Text(
                       'Select',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
                     ),
                   ),
                 ],
@@ -877,7 +1046,6 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildDashboardTab() {
     return Column(
       children: [
-        // Search bar at top
         Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -886,15 +1054,13 @@ class _DashboardScreenState extends State<DashboardScreen>
                 controller: _destinationController,
                 onChanged: (value) {
                   if (_debounce?.isActive ?? false) _debounce!.cancel();
-                  _debounce =
-                      Timer(const Duration(milliseconds: 500), () {
-                        _fetchSearchSuggestions(value);
-                      });
+                  _debounce = Timer(const Duration(milliseconds: 500), () {
+                    _fetchSearchSuggestions(value);
+                  });
                 },
                 decoration: InputDecoration(
                   hintText: "Search hospital destination",
-                  prefixIcon:
-                  const Icon(Icons.search, color: Colors.grey),
+                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
                   suffixIcon: _destinationController.text.isNotEmpty
                       ? IconButton(
                     icon: const Icon(Icons.clear, color: Colors.grey),
@@ -904,13 +1070,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                     },
                   )
                       : null,
-                  contentPadding: const EdgeInsets.symmetric(
-                      vertical: 12, horizontal: 16),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8)),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                 ),
               ),
-              // Search suggestions dropdown
               if (_searchSuggestions.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(top: 8),
@@ -918,9 +1081,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   decoration: BoxDecoration(
                     color: Theme.of(context).cardColor,
                     borderRadius: BorderRadius.circular(8),
-                    boxShadow: const [
-                      BoxShadow(color: Colors.black12, blurRadius: 4)
-                    ],
+                    boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
                   ),
                   child: ListView.builder(
                     shrinkWrap: true,
@@ -943,14 +1104,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   '?place_id=$placeId&key=$_googleApiKey');
                           final detailsResp = await http.get(detailsUrl);
                           if (detailsResp.statusCode == 200) {
-                            final detailsData =
-                            json.decode(detailsResp.body);
-                            final loc = detailsData['result']['geometry']
-                            ['location'];
-                            final double lat =
-                            (loc['lat'] as num).toDouble();
-                            final double lng =
-                            (loc['lng'] as num).toDouble();
+                            final detailsData = json.decode(detailsResp.body);
+                            final loc = detailsData['result']['geometry']['location'];
+                            final double lat = (loc['lat'] as num).toDouble();
+                            final double lng = (loc['lng'] as num).toDouble();
                             _showPrioritySelectionSheet({
                               'name': description,
                               'lat': lat,
@@ -968,27 +1125,23 @@ class _DashboardScreenState extends State<DashboardScreen>
             ],
           ),
         ),
-        // Nearby Hospitals header
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
               const Text(
                 'Nearby Hospitals',
-                style:
-                TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const Spacer(),
               IconButton(
                 tooltip: 'Refresh nearby hospitals',
-                icon:
-                const Icon(Icons.refresh, color: Colors.red),
+                icon: const Icon(Icons.refresh, color: Colors.red),
                 onPressed: _refreshLocationAndHospitals,
               ),
             ],
           ),
         ),
-        // Hospital list
         Expanded(
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
@@ -1000,8 +1153,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           )
               : ListView.builder(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: nearbyHospitals.length,
             itemBuilder: (context, index) {
               final hospital = nearbyHospitals[index];
@@ -1010,6 +1162,56 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _checkForExistingRequest() async {
+    try {
+      final snapshot = await FirebaseDatabase.instanceFor(
+        app: Firebase.app(),
+        databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+      ).ref()
+          .child('emergency_requests')
+          .orderByChild('ambulanceId')
+          .equalTo(widget.ambulanceId)
+          .once();
+
+      if (snapshot.snapshot.exists && mounted) {
+        final requests = snapshot.snapshot.value as Map<dynamic, dynamic>;
+        for (var entry in requests.entries) {
+          final data = Map<String, dynamic>.from(entry.value);
+          if (data['status'] == 'pending') {
+            _handleAssignedRequest(entry.key, data);
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      print('❌ Error checking for existing requests: $e');
+    }
+  }
+
+  void _navigateToRequest(
+      Map<String, dynamic> data,
+      double destLat,
+      double destLng,
+      EmergencyPriority priority,
+      String requestId,
+      ) {
+    _isNavigatingToRequest = true;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RouteNavigationScreen(
+          ambulanceId: widget.ambulanceId,
+          destination: data['destination'] ?? 'Hospital',
+          destinationLat: destLat,
+          destinationLng: destLng,
+          onToggleTheme: widget.onToggleTheme,
+          priority: priority,
+          justification: data['description'],
+        ),
+      ),
     );
   }
 
@@ -1022,8 +1224,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         elevation: 0,
         title: Row(
           children: [
-            const Icon(Icons.local_shipping_outlined,
-                color: Colors.white),
+            const Icon(Icons.local_shipping_outlined, color: Colors.white),
             const SizedBox(width: 8),
             Text(
               widget.ambulanceId,
@@ -1037,9 +1238,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         ),
         actions: [
           IconButton(
-            icon: Icon(
-                isDark ? Icons.wb_sunny : Icons.nights_stay,
-                color: Colors.white),
+            icon: Icon(isDark ? Icons.wb_sunny : Icons.nights_stay, color: Colors.white),
             onPressed: widget.onToggleTheme,
           ),
         ],
@@ -1049,17 +1248,10 @@ class _DashboardScreenState extends State<DashboardScreen>
           indicatorWeight: 3,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
-          labelStyle: const TextStyle(
-              fontWeight: FontWeight.w600, fontSize: 16),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
           tabs: const [
-            Tab(
-              icon: Icon(Icons.dashboard),
-              text: 'Dashboard',
-            ),
-            Tab(
-              icon: Icon(Icons.history),
-              text: 'History',
-            ),
+            Tab(icon: Icon(Icons.dashboard), text: 'Dashboard'),
+            Tab(icon: Icon(Icons.history), text: 'History'),
           ],
         ),
       ),
@@ -1084,6 +1276,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     _destinationController.dispose();
     _justificationController.dispose();
     _tabController.dispose();
+    _assignedRequestSubscription?.cancel();
     super.dispose();
   }
 }

@@ -8,19 +8,246 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'config.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'screens/route_navigation.dart';
+import 'models/priority_model.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'dart:async';
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+FlutterLocalNotificationsPlugin();
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// Global notification listener reference
+StreamSubscription<DatabaseEvent>? _notificationSubscription;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Load environment variables
   await dotenv.load(fileName: ".env");
 
+  // Initialize local notifications
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+  final DarwinInitializationSettings initializationSettingsIOS =
+  DarwinInitializationSettings();
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+    iOS: initializationSettingsIOS,
+  );
+  await flutterLocalNotificationsPlugin.initialize(
+    initializationSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse response) async {
+      if (response.payload != null) {
+        final data = jsonDecode(response.payload!);
+        // Navigate to route navigation screen
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (_) => RouteNavigationScreen(
+              ambulanceId: data['ambulanceId'],
+              destination: data['destination'],
+              destinationLat: data['destLat'],
+              destinationLng: data['destLng'],
+              onToggleTheme: () {}, // You can handle theme separately
+              priority: EmergencyPriority.values[data['priority']],
+              justification: data['description'],
+            ),
+          ),
+        );
+      }
+    },
+  );
+
+  // Check for any pending notifications from when app was terminated
+  await _handleBackgroundNotification();
+
   runApp(const MyApp());
+}
+
+// Global function to setup notification listener
+void setupNotificationListener(String ambulanceId) {
+  print('🎯 Setting up notification listener for ambulance: $ambulanceId');
+
+  // Cancel any existing subscription
+  _notificationSubscription?.cancel();
+
+  final database = FirebaseDatabase.instanceFor(
+    app: Firebase.app(),
+    databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+  ).ref();
+
+  // Listen for new notifications
+  _notificationSubscription = database
+      .child('ambulance_notifications')
+      .orderByChild('timestamp')
+      .limitToLast(5) // Get last 5 to catch any we might have missed
+      .onChildAdded
+      .listen((event) {
+    print('📨 Firebase child added event triggered!');
+    print('📨 Snapshot exists: ${event.snapshot.exists}');
+
+    if (event.snapshot.exists) {
+      final notification = Map<String, dynamic>.from(event.snapshot.value as Map);
+      print('📨 Notification received: $notification');
+
+      // Check if this notification is for this ambulance
+      _checkAndShowNotification(notification, ambulanceId);
+    } else {
+      print('📨 Snapshot does not exist');
+    }
+  }, onError: (error) {
+    print('❌ Listener error: $error');
+  });
+
+  print('✅ Notification listener set up for ambulance: $ambulanceId');
+
+  // Also fetch existing unread notifications
+  _fetchUnreadNotifications(ambulanceId);
+}
+
+// Add this new function to fetch any notifications that might have been missed
+Future<void> _fetchUnreadNotifications(String ambulanceId) async {
+  print('🔍 Fetching unread notifications for $ambulanceId');
+
+  try {
+    final database = FirebaseDatabase.instanceFor(
+      app: Firebase.app(),
+      databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+    ).ref();
+
+    final snapshot = await database
+        .child('ambulance_notifications')
+        .orderByChild('ambulanceId')
+        .equalTo(ambulanceId)
+        .once();
+
+    if (snapshot.snapshot.exists) {
+      final notifications = Map<String, dynamic>.from(snapshot.snapshot.value as Map);
+      print('📚 Found ${notifications.length} notifications for $ambulanceId');
+
+      notifications.forEach((key, value) {
+        final notification = Map<String, dynamic>.from(value);
+        if (notification['read'] == false) {
+          print('📬 Unread notification found: $key');
+          _checkAndShowNotification(notification, ambulanceId);
+        }
+      });
+    } else {
+      print('📭 No notifications found for $ambulanceId');
+    }
+  } catch (e) {
+    print('❌ Error fetching unread notifications: $e');
+  }
+}
+
+// Global function to check and show notification
+Future<void> _checkAndShowNotification(Map<String, dynamic> notification, String currentAmbulanceId) async {
+  try {
+    print('🔍 Checking notification for ambulance: $currentAmbulanceId');
+    print('🔍 Notification ambulanceId: ${notification['ambulanceId']}');
+    print('🔍 Notification read status: ${notification['read']}');
+
+    // Check if notification is for this ambulance and not read
+    if (notification['ambulanceId'] == currentAmbulanceId) {
+
+      if (notification['read'] == false) {
+        print('✅ Notification matches and is unread! Showing notification...');
+
+        // Mark as read in Firebase
+        if (notification['notificationId'] != null) {
+          try {
+            final database = FirebaseDatabase.instanceFor(
+              app: Firebase.app(),
+              databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+            ).ref();
+
+            await database
+                .child('ambulance_notifications')
+                .child(notification['notificationId'])
+                .update({'read': true});
+            print('✅ Marked notification as read');
+          } catch (e) {
+            print('❌ Error marking as read: $e');
+          }
+        }
+
+        // Show local notification
+        _showLocalNotification(notification);
+      } else {
+        print('ℹ️ Notification already read, skipping');
+      }
+    } else {
+      print('ℹ️ Notification not for this ambulance (${notification['ambulanceId']} != $currentAmbulanceId)');
+    }
+  } catch (e) {
+    debugPrint('Error checking notification: $e');
+  }
+}
+
+// Global function to show local notification
+Future<void> _showLocalNotification(Map<String, dynamic> notification) async {
+  const AndroidNotificationDetails androidPlatformChannelSpecifics =
+  AndroidNotificationDetails(
+    'emergency_dispatches',
+    'Emergency Dispatches',
+    importance: Importance.max,
+    priority: Priority.high,
+    showWhen: true,
+    enableVibration: true,
+    playSound: true,
+  );
+
+  const NotificationDetails platformChannelSpecifics =
+  NotificationDetails(android: androidPlatformChannelSpecifics);
+
+  final data = notification['data'] as Map<String, dynamic>? ?? {};
+
+  String title = notification['title'] ?? '🚑 New Emergency';
+  String body = notification['body'] ?? 'Emergency assigned to your ambulance';
+
+  // Prepare payload for navigation
+  Map<String, dynamic> payloadData = {
+    'ambulanceId': data['ambulanceId'] ?? '',
+    'destination': data['destination'] ?? 'Hospital',
+    'destLat': data['destinationLat'] ?? 0.0,
+    'destLng': data['destinationLng'] ?? 0.0,
+    'priority': data['priority'] ?? 1,
+    'description': data['description'] ?? '',
+    'requestId': data['requestId'] ?? '',
+  };
+
+  String payload = jsonEncode(payloadData);
+
+  await flutterLocalNotificationsPlugin.show(
+    notification.hashCode,
+    title,
+    body,
+    platformChannelSpecifics,
+    payload: payload,
+  );
+}
+
+// Handle background notification when app is launched from terminated state
+Future<void> _handleBackgroundNotification() async {
+  final prefs = await SharedPreferences.getInstance();
+  final pendingNotification = prefs.getString('pending_notification');
+
+  if (pendingNotification != null) {
+    try {
+      final data = jsonDecode(pendingNotification);
+      // Clear pending notification
+      await prefs.remove('pending_notification');
+
+      // Store in shared preferences that we have a pending navigation
+      await prefs.setString('pending_navigation', pendingNotification);
+    } catch (e) {
+      debugPrint('Error handling pending notification: $e');
+    }
+  }
 }
 
 class MyApp extends StatefulWidget {
@@ -31,7 +258,45 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  ThemeMode _themeMode = ThemeMode.light; // default is light
+  ThemeMode _themeMode = ThemeMode.light;
+
+  @override
+  void initState() {
+    super.initState();
+    // Check for pending navigation after app starts
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkPendingNavigation();
+    });
+  }
+
+  Future<void> _checkPendingNavigation() async {
+    final prefs = await SharedPreferences.getInstance();
+    final pendingNav = prefs.getString('pending_navigation');
+
+    if (pendingNav != null) {
+      try {
+        final data = jsonDecode(pendingNav);
+        await prefs.remove('pending_navigation');
+
+        // Navigate to route navigation screen
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (_) => RouteNavigationScreen(
+              ambulanceId: data['ambulanceId'],
+              destination: data['destination'],
+              destinationLat: data['destLat'],
+              destinationLng: data['destLng'],
+              onToggleTheme: _toggleTheme,
+              priority: EmergencyPriority.values[data['priority']],
+              justification: data['description'],
+            ),
+          ),
+        );
+      } catch (e) {
+        debugPrint('Error navigating from pending: $e');
+      }
+    }
+  }
 
   void _toggleTheme() {
     setState(() {
@@ -43,6 +308,7 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'AARCS Ambulance',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -64,7 +330,7 @@ class _MyAppState extends State<MyApp> {
       themeMode: _themeMode,
       home: LoginScreen(
         onToggleTheme: _toggleTheme,
-        isDark: _themeMode == ThemeMode.dark, // ✅ pass theme state
+        isDark: _themeMode == ThemeMode.dark,
       ),
     );
   }
@@ -91,8 +357,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _rememberMe = false;
   bool _isButtonPressed = false;
 
-
-  // SharedPreferences keys
   static const String _ambulanceIdKey = 'ambulance_id';
   static const String _passwordKey = 'password';
   static const String _rememberMeKey = 'remember_me';
@@ -103,7 +367,6 @@ class _LoginScreenState extends State<LoginScreen> {
     _loadSavedCredentials();
   }
 
-  // Load saved credentials from SharedPreferences
   Future<void> _loadSavedCredentials() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -120,34 +383,28 @@ class _LoginScreenState extends State<LoginScreen> {
         });
       }
     } catch (e) {
-      // Handle any errors during loading
       debugPrint('Error loading saved credentials: $e');
     }
   }
 
-  // Save credentials to SharedPreferences
   Future<void> _saveCredentials() async {
     try {
       final prefs = await SharedPreferences.getInstance();
 
       if (_rememberMe) {
-        // Save credentials if Remember Me is checked
         await prefs.setString(_ambulanceIdKey, _idController.text.trim().toUpperCase());
         await prefs.setString(_passwordKey, _passwordController.text.trim());
         await prefs.setBool(_rememberMeKey, true);
       } else {
-        // Clear saved credentials if Remember Me is unchecked
         await prefs.remove(_ambulanceIdKey);
         await prefs.remove(_passwordKey);
         await prefs.setBool(_rememberMeKey, false);
       }
     } catch (e) {
-      // Handle any errors during saving
       debugPrint('Error saving credentials: $e');
     }
   }
 
-  // Clear all saved credentials
   Future<void> _clearSavedCredentials() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -170,7 +427,6 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // Show loading indicator
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -180,13 +436,11 @@ class _LoginScreenState extends State<LoginScreen> {
     );
 
     try {
-      // Get backend URL from environment
       final backendUrl = dotenv.env['BACKEND_URL'] ?? 'http://10.0.2.2:3000';
 
       print('🔍 Connecting to: $backendUrl');
       print('🚑 Authenticating: $id');
 
-      // Send authentication request to backend
       final response = await http.post(
         Uri.parse(Config.ambulanceAuthEndpoint),
         headers: {'Content-Type': 'application/json'},
@@ -196,7 +450,6 @@ class _LoginScreenState extends State<LoginScreen> {
         }),
       ).timeout(const Duration(seconds: 10));
 
-      // Close loading dialog
       if (mounted) Navigator.of(context).pop();
 
       print('📡 Response status: ${response.statusCode}');
@@ -210,15 +463,26 @@ class _LoginScreenState extends State<LoginScreen> {
 
           print('✅ Token received, signing in to Firebase...');
 
-          // Sign in to Firebase with custom token
           await FirebaseAuth.instance.signInWithCustomToken(customToken);
 
-          // Save credentials if remember me is checked
-          await _saveCredentials();
+          await _saveCredentials(); // This already saves ambulance ID
+
+          // Also store in Firebase for notification targeting
+          final database = FirebaseDatabase.instanceFor(
+            app: Firebase.app(),
+            databaseURL: 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app',
+          ).ref();
+
+          await database.child('active_ambulances').child(ambulanceId).set({
+            'lastSeen': ServerValue.timestamp, // This is correct
+            'status': 'active'
+          });
+
+          // Set up notification listener for this ambulance
+          setupNotificationListener(ambulanceId);
 
           print('✅ Login successful!');
 
-          // Navigate to dashboard
           if (mounted) {
             Navigator.pushReplacement(
               context,
@@ -281,7 +545,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -291,7 +554,6 @@ class _LoginScreenState extends State<LoginScreen> {
           child: SingleChildScrollView(
             child: Column(
               children: [
-                // 🌞/🌙 Theme toggle
                 Align(
                   alignment: Alignment.topRight,
                   child: IconButton(
@@ -302,8 +564,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: widget.onToggleTheme,
                   ),
                 ),
-
-                // 🚑 Logo
                 CircleAvatar(
                   radius: 40,
                   backgroundColor: Colors.red,
@@ -323,8 +583,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: TextStyle(fontSize: 16, color: Colors.grey),
                 ),
                 const SizedBox(height: 30),
-
-                // Ambulance ID
                 TextField(
                   controller: _idController,
                   decoration: const InputDecoration(
@@ -335,8 +593,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-
-                // Password
                 TextField(
                   controller: _passwordController,
                   obscureText: _obscurePassword,
@@ -361,7 +617,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 const SizedBox(height: 10),
-
                 Row(
                   children: [
                     Checkbox(
@@ -371,7 +626,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         setState(() {
                           _rememberMe = value ?? false;
                         });
-                        // If unchecked, clear saved credentials immediately
                         if (!_rememberMe) {
                           _clearSavedCredentials();
                         }
@@ -381,7 +635,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
                 ),
                 const SizedBox(height: 20),
-
                 GestureDetector(
                   onTapDown: (_) {
                     setState(() {
@@ -428,6 +681,8 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _idController.dispose();
     _passwordController.dispose();
+    // Cancel notification subscription when logging out
+    _notificationSubscription?.cancel();
     super.dispose();
   }
 }

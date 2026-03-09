@@ -314,22 +314,23 @@
 }
 
 .call-log-container {
-    background: #0f172a;  /* Dark background for chat-like feel */
-    border-radius: 12px;
-    padding: 24px;
+    min-height: 300px;
     max-height: 400px;
     overflow-y: auto;
+    background: #0f172a;
+    border-radius: 12px;
+    padding: 16px;
     margin-bottom: 16px;
-    font-family: 'Inter', monospace;
 }
 
-/* Chat message styling */
 .call-log-message {
-    display: flex;
-    flex-direction: column;
-    margin-bottom: 20px;
-    max-width: 85%;
-    animation: fadeIn 0.3s ease-out;
+    margin-bottom: 16px;
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .call-log-message.agent {
