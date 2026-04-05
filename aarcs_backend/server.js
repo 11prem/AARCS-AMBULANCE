@@ -8,45 +8,23 @@ require("dotenv").config();
 // Initialize Firebase Admin SDK
 let serviceAccount;
 try {
-  // Try loading from environment variable (Render)
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    try {
-      // Check if it's a JSON string
-      serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS);
-      console.log("✅ Loaded service account from environment variable");
-    } catch (e) {
-      // If not JSON, treat as file path
-      serviceAccount = require(process.env.GOOGLE_APPLICATION_CREDENTIALS);
-      console.log("✅ Loaded service account from file path");
-    }
+  // Read from environment variable (Render)
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    console.log("✅ Loaded service account from environment variable");
   }
-  // Try loading from base64 encoded variable
-  else if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
-    const decoded = Buffer.from(
-      process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
-      "base64",
-    ).toString();
-    serviceAccount = JSON.parse(decoded);
-    console.log("✅ Loaded service account from base64 variable");
-  }
-  // Fallback to local file
+  // Fallback for local development
   else {
-    console.log("📁 Trying local config file...");
     serviceAccount = require("./config/firebase-service-account.json");
     console.log("✅ Loaded service account from local file");
   }
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    databaseURL:
-      process.env.FIREBASE_DATABASE_URL ||
-      "https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app",
+    databaseURL: process.env.FIREBASE_DATABASE_URL,
   });
-
-  console.log("✅ Firebase Admin initialized successfully");
 } catch (error) {
   console.error("❌ Failed to initialize Firebase:", error.message);
-  console.error("   Please check your service account key configuration");
   process.exit(1);
 }
 
