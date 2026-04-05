@@ -1,34 +1,56 @@
-const express = require('express');
-const admin = require('firebase-admin');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const path = require('path');
-require('dotenv').config(); // Add this to load .env file
+const express = require("express");
+const admin = require("firebase-admin");
+const bodyParser = require("body-parser");
+const cors = require("cors");
+const path = require("path");
+require("dotenv").config();
 
 // Initialize Firebase Admin SDK
 let serviceAccount;
 try {
-  // Try to load from environment variable first
+  // Try loading from environment variable (Render)
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    console.log(`📁 Loading service account from: ${process.env.GOOGLE_APPLICATION_CREDENTIALS}`);
-    serviceAccount = require(process.env.GOOGLE_APPLICATION_CREDENTIALS);
-  } else {
-    // Try local config folder as fallback
-    console.log('📁 No GOOGLE_APPLICATION_CREDENTIALS found, trying local config...');
-    serviceAccount = require('./config/firebase-service-account.json');
+    try {
+      // Check if it's a JSON string
+      serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+      console.log("✅ Loaded service account from environment variable");
+    } catch (e) {
+      // If not JSON, treat as file path
+      serviceAccount = require(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+      console.log("✅ Loaded service account from file path");
+    }
+  }
+  // Try loading from base64 encoded variable
+  else if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    const decoded = Buffer.from(
+      process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
+      "base64",
+    ).toString();
+    serviceAccount = JSON.parse(decoded);
+    console.log("✅ Loaded service account from base64 variable");
+  }
+  // Fallback to local file
+  else {
+    console.log("📁 Trying local config file...");
+    serviceAccount = require("./config/firebase-service-account.json");
+    console.log("✅ Loaded service account from local file");
   }
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    databaseURL: process.env.FIREBASE_DATABASE_URL || 'https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app'
+    databaseURL:
+      process.env.FIREBASE_DATABASE_URL ||
+      "https://aarcs-2f28b-default-rtdb.asia-southeast1.firebasedatabase.app",
   });
 
-  console.log('✅ Firebase Admin initialized successfully');
+  console.log("✅ Firebase Admin initialized successfully");
 } catch (error) {
-  console.error('❌ Failed to initialize Firebase:', error.message);
-  console.error('   Please check your service account key path');
+  console.error("❌ Failed to initialize Firebase:", error.message);
+  console.error("   Please check your service account key configuration");
   process.exit(1);
 }
+
+// Rest of your server.js code remains the same...
 
 const app = express();
 app.use(cors());
@@ -36,22 +58,22 @@ app.use(bodyParser.json());
 
 // Ambulance credentials
 const ambulanceCredentials = {
-  'AMB-001': 'admin',  // Updated to match your app's login
-  'AMB002': 'emergency234',
-  'AMB003': 'emergency456'
+  "AMB-001": "admin", // Updated to match your app's login
+  AMB002: "emergency234",
+  AMB003: "emergency456",
 };
 
 // Traffic Police credentials
 const trafficPoliceCredentials = {
-  'TP-2024-156': 'admin',  // Updated to match your app's login
-  'POL002': 'traffic234',
-  'POL003': 'traffic345'
+  "TP-2024-156": "admin", // Updated to match your app's login
+  POL002: "traffic234",
+  POL003: "traffic345",
 };
 
 // Helper function to get current timestamp
 function getTimestamp() {
   const now = new Date();
-  return now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  return now.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 }
 
 // Shared ambulance authentication logic
@@ -59,125 +81,137 @@ async function authenticateAmbulance(req, res) {
   const { ambulanceId, password } = req.body;
   const timestamp = getTimestamp();
 
-  console.log('\n' + '='.repeat(60));
+  console.log("\n" + "=".repeat(60));
   console.log(`🚑 [${timestamp}] Ambulance Login Attempt`);
   console.log(`   Ambulance ID: ${ambulanceId}`);
-  console.log('='.repeat(60));
+  console.log("=".repeat(60));
 
-  if (ambulanceCredentials[ambulanceId] && ambulanceCredentials[ambulanceId] === password) {
+  if (
+    ambulanceCredentials[ambulanceId] &&
+    ambulanceCredentials[ambulanceId] === password
+  ) {
     try {
       const customToken = await admin.auth().createCustomToken(ambulanceId, {
         userId: ambulanceId,
-        role: 'ambulance_driver',
-        type: 'ambulance'
+        role: "ambulance_driver",
+        type: "ambulance",
       });
 
       console.log(`✅ [${timestamp}] ${ambulanceId} logged in successfully!`);
       console.log(`   Role: ambulance_driver`);
-      console.log('='.repeat(60) + '\n');
+      console.log("=".repeat(60) + "\n");
 
       res.json({
         success: true,
         token: customToken,
         userId: ambulanceId,
-        ambulanceId: ambulanceId,  // For backward compatibility
-        role: 'ambulance_driver'
+        ambulanceId: ambulanceId, // For backward compatibility
+        role: "ambulance_driver",
       });
     } catch (error) {
-      console.error(`❌ [${timestamp}] Token generation failed for ${ambulanceId}`);
+      console.error(
+        `❌ [${timestamp}] Token generation failed for ${ambulanceId}`,
+      );
       console.error(`   Error: ${error.message}`);
-      console.log('='.repeat(60) + '\n');
+      console.log("=".repeat(60) + "\n");
 
       res.status(500).json({
         success: false,
-        message: 'Server error'
+        message: "Server error",
       });
     }
   } else {
     console.log(`❌ [${timestamp}] Login failed for ${ambulanceId}`);
     console.log(`   Reason: Invalid credentials`);
-    console.log('='.repeat(60) + '\n');
+    console.log("=".repeat(60) + "\n");
 
     res.status(401).json({
       success: false,
-      message: 'Invalid Ambulance ID or Password'
+      message: "Invalid Ambulance ID or Password",
     });
   }
 }
 
 // Legacy ambulance endpoint (for backward compatibility)
-app.post('/authenticate', authenticateAmbulance);
+app.post("/authenticate", authenticateAmbulance);
 
 // New ambulance endpoint
-app.post('/authenticate/ambulance', authenticateAmbulance);
+app.post("/authenticate/ambulance", authenticateAmbulance);
 
 // Traffic Police authentication endpoint
-app.post('/authenticate/police', async (req, res) => {
+app.post("/authenticate/police", async (req, res) => {
   const { policeId, password } = req.body;
   const timestamp = getTimestamp();
 
-  console.log('\n' + '='.repeat(60));
+  console.log("\n" + "=".repeat(60));
   console.log(`🚔 [${timestamp}] Traffic Police Login Attempt`);
   console.log(`   Police ID: ${policeId}`);
-  console.log('='.repeat(60));
+  console.log("=".repeat(60));
 
-  if (trafficPoliceCredentials[policeId] && trafficPoliceCredentials[policeId] === password) {
+  if (
+    trafficPoliceCredentials[policeId] &&
+    trafficPoliceCredentials[policeId] === password
+  ) {
     try {
       const customToken = await admin.auth().createCustomToken(policeId, {
         userId: policeId,
-        role: 'traffic_police',
-        type: 'police'
+        role: "traffic_police",
+        type: "police",
       });
 
       console.log(`✅ [${timestamp}] ${policeId} logged in successfully!`);
       console.log(`   Role: traffic_police`);
-      console.log('='.repeat(60) + '\n');
+      console.log("=".repeat(60) + "\n");
 
       res.json({
         success: true,
         token: customToken,
         userId: policeId,
-        role: 'traffic_police'
+        role: "traffic_police",
       });
     } catch (error) {
-      console.error(`❌ [${timestamp}] Token generation failed for ${policeId}`);
+      console.error(
+        `❌ [${timestamp}] Token generation failed for ${policeId}`,
+      );
       console.error(`   Error: ${error.message}`);
-      console.log('='.repeat(60) + '\n');
+      console.log("=".repeat(60) + "\n");
 
       res.status(500).json({
         success: false,
-        message: 'Server error'
+        message: "Server error",
       });
     }
   } else {
     console.log(`❌ [${timestamp}] Login failed for ${policeId}`);
     console.log(`   Reason: Invalid credentials`);
-    console.log('='.repeat(60) + '\n');
+    console.log("=".repeat(60) + "\n");
 
     res.status(401).json({
       success: false,
-      message: 'Invalid Police ID or Password'
+      message: "Invalid Police ID or Password",
     });
   }
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get("/health", (req, res) => {
   const timestamp = getTimestamp();
   console.log(`💚 [${timestamp}] Health check requested`);
-  res.json({ status: 'Server running', timestamp: timestamp });
+  res.json({ status: "Server running", timestamp: timestamp });
 });
 
 const PORT = 3000;
 app.listen(PORT, () => {
-  console.log('\n' + '█'.repeat(60));
-  console.log('🚀 AARCS Authentication Server Started');
-  console.log('█'.repeat(60));
+  console.log("\n" + "█".repeat(60));
+  console.log("🚀 AARCS Authentication Server Started");
+  console.log("█".repeat(60));
   console.log(`📡 Server running on: http://localhost:${PORT}`);
   console.log(`📁 Firebase config loaded successfully`);
   console.log(`⏰ Server started at: ${getTimestamp()}`);
-  console.log(`\n🚑 Ambulances: ${Object.keys(ambulanceCredentials).join(', ')}`);
-  console.log(`🚔 Police: ${Object.keys(trafficPoliceCredentials).join(', ')}`);
-  console.log('█'.repeat(60) + '\n');
-  console.log('Waiting for login requests...\n');
+  console.log(
+    `\n🚑 Ambulances: ${Object.keys(ambulanceCredentials).join(", ")}`,
+  );
+  console.log(`🚔 Police: ${Object.keys(trafficPoliceCredentials).join(", ")}`);
+  console.log("█".repeat(60) + "\n");
+  console.log("Waiting for login requests...\n");
 });
